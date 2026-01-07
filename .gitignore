@@ -1,0 +1,29 @@
+# 在 Fomo.jl 目录下创建 .gitignore
+cd E:\dev\Fomo.jl
+
+# 创建 .gitignore
+@"
+# 大文件/数据
+*.jld2
+*.segy
+*.sgy
+*.bin
+*.mat
+*.npy
+*.npz
+*.h5
+*.hdf5
+
+# 输出目录
+outputs/
+output/
+videos/
+
+# Julia 编译缓存
+*.ji
+Manifest.toml
+
+# IDE
+.vscode/
+.idea/
+"@ | Out-File -Encoding utf8 .gitignore
