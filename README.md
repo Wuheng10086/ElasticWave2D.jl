@@ -9,6 +9,10 @@
 
 ```ibm_method=:mirror```  is **not stable** yet, please wait for the next release.
 
+
+https://github.com/user-attachments/assets/f6e8ed73-f5c8-4dba-924c-b7cb6910ff6e
+
+
 ## ✨ Features
 
 - 🚀 **Backend-dispatched architecture** - Same code runs on CPU or GPU
