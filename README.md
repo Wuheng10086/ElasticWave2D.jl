@@ -1,103 +1,108 @@
 # Fomo.jl
 
-[![CI](https://github.com/Wuheng10086/Fomo.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/Wuheng10086/Fomo.jl/actions/workflows/CI.yml)
-[![Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://Wuheng10086.github.io/Fomo.jl/)
+**F**orward M**o**deling - High-Performance 2D Elastic Wave Simulation
 
-**High-performance 2D elastic wave forward modeling in Julia**
+## Features
 
-Fomo.jl is a Julia package for 2D elastic wave simulation using the staggered-grid finite-difference method. It supports both CPU and GPU (CUDA) backends with optimized kernels for maximum performance.
+- 2D elastic wave propagation (P-SV)
+- Staggered-grid finite difference method
+- GPU acceleration (CUDA)
+- Irregular free surface (IBM method)
+- HABC absorbing boundary conditions
+- Shot gather recording
+- Wavefield video generation
 
-## ✨ Features
+## Project Structure
 
-- **Backend-dispatched architecture** - Same code runs on CPU or GPU
-- **High-order staggered-grid FD** - 2nd to 10th order accuracy
-- **HABC boundary conditions** - Higdon Absorbing Boundary Conditions
-- **Free surface modeling** - Accurate surface wave simulation
-- **Multi-GPU parallel execution** - Automatic workload distribution
-- **Multiple model formats** - JLD2, SEG-Y, binary, and more
-
-## 🚀 Performance Optimizations
-
-This version includes significant performance optimizations:
-
-| Optimization | Speedup | Description |
-|-------------|---------|-------------|
-| Precomputed buoyancy (1/ρ) | 15-25% | Eliminates division in velocity update |
-| Precomputed λ+2μ | 5-10% | Reduces stress update computation |
-| Unrolled FD stencils | 10-15% | Better SIMD vectorization |
-| Optimized GPU blocks (32×8) | 10-20% | Better memory coalescing |
-
-**Expected total speedup: 40-60%**
-
-## 📦 Installation
-
-```julia
-using Pkg
-Pkg.add(url="https://github.com/Wuheng10086/Fomo.jl")
+```
+src/
+├── Fomo.jl                   # Main module
+├── backends/
+│   └── backend.jl            # CPU/CUDA backend abstraction
+├── types/
+│   ├── structures.jl         # Core types (Wavefield, Medium, Source, etc.)
+│   └── model.jl              # VelocityModel
+├── kernels/
+│   ├── velocity.jl           # Velocity update kernel
+│   ├── stress.jl             # Stress update kernel
+│   ├── boundary.jl           # HABC, free surface
+│   ├── source_receiver.jl    # Source injection, receiver recording
+│   └── ibm.jl                # Immersed Boundary Method
+├── surface/
+│   └── irregular.jl          # Irregular surface initialization
+├── simulation/
+│   ├── init.jl               # Medium/wavefield initialization
+│   ├── time_stepper.jl       # Time stepping (regular surface)
+│   ├── time_stepper_ibm.jl   # Time stepping (irregular surface)
+│   ├── shots.jl              # Shot management
+│   └── parallel.jl           # Multi-GPU parallel execution
+├── io/
+│   ├── model_io.jl           # Model load/save
+│   ├── gather_io.jl          # Gather save/load
+│   └── geometry_io.jl        # Survey geometry
+└── visualization/
+    ├── video.jl              # Wavefield video recording
+    └── plots.jl              # Static plots
 ```
 
-## 🎯 Quick Start
+## Quick Start
 
 ```julia
 using Fomo
 
-# Create a simple velocity model
-nx, nz = 200, 100
-vp = fill(3000.0f0, nz, nx)
-vs = fill(1800.0f0, nz, nx)
-rho = fill(2200.0f0, nz, nx)
+# Create velocity model
+vp = fill(3000.0f0, 200, 400)  # [nz, nx]
+vs = fill(1800.0f0, 200, 400)
+rho = fill(2200.0f0, 200, 400)
+model = VelocityModel(vp, vs, rho, 10.0f0, 10.0f0)
 
-# Add a layer
-vp[nz÷2:end, :] .= 4000.0f0
-vs[nz÷2:end, :] .= 2400.0f0
-
-model = VelocityModel(vp, vs, rho, 10.0f0, 10.0f0; name="TwoLayer")
-
-# Choose backend
+# Select backend
 be = is_cuda_available() ? backend(:cuda) : backend(:cpu)
 
 # Initialize simulation
-nbc, fd_order = 50, 8
-medium = init_medium(model, nbc, fd_order, be; free_surface=true)
+medium = init_medium(model, 50, 8, be; free_surface=true)
+wavefield = Wavefield(medium.nx, medium.nz, be)
 
-# ... setup sources, receivers, and run simulation
-# See examples/ for complete examples
+# Setup source and receivers
+wavelet = ricker_wavelet(15.0f0, dt, nt)
+src = Source(src_i, src_j, to_device(wavelet, be))
+rec = setup_receivers(rec_x, rec_z, nt, medium, be)
+
+# Run simulation
+run_shot!(be, wavefield, medium, habc, fd_coeffs, rec, src, params)
 ```
 
-## 📁 Project Structure
+## Irregular Surface Example
 
+```julia
+# Create irregular surface
+z_surface = 50.0f0 .+ 20.0f0 .* sin.(2π .* x ./ 1000.0f0)
+
+# Initialize with IBM method
+surface = init_irregular_surface(z_surface, medium; method=:direct_zero)
+surface_gpu = to_gpu(surface)
+
+# Setup source/receivers relative to surface
+src = setup_irregular_source(src_x, src_depth, wavelet, surface, medium; backend=be)
+rec = setup_surface_receivers(rec_x, surface, medium, nt; backend=be)
+
+# Run with irregular surface
+time_step_irregular!(be, wavefield, medium, habc, fd_coeffs, src, rec, k, params, surface_gpu)
 ```
-Fomo.jl/
-├── src/
-│   ├── Fomo.jl              # Main module
-│   ├── backends/            # CPU/CUDA dispatch
-│   ├── core/                # Data structures
-│   ├── kernels/             # FD kernels (optimized)
-│   ├── io/                  # Model and data I/O
-│   ├── simulation/          # Time stepping
-│   ├── utils/               # Initialization (optimized)
-│   └── visualization/       # Plotting utilities
-├── examples/                # Usage examples
-├── scripts/                 # Utility scripts
-├── test/                    # Unit tests
-└── docs/                    # Documentation
-```
 
-## 📖 Examples
+## IBM Methods
 
-- `examples/basic_example.jl` - Simple two-layer model
-- `examples/run.jl` - Full simulation with model file
-- `examples/run_parallel.jl` - Multi-GPU parallel execution
+| Method | Description | Use Case |
+|--------|-------------|----------|
+| `:direct_zero` | Direct stress zeroing | Complex terrain, stable |
+| `:mirror` | Mirror interpolation | Gentle terrain, higher accuracy |
 
-## 🔧 Requirements
+## Requirements
 
 - Julia 1.9+
-- CUDA.jl (optional, for GPU acceleration)
+- CUDA.jl (for GPU support)
+- CairoMakie.jl (for visualization)
 
-## 📄 License
+## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
-## 🙏 Acknowledgments
-
-This package implements the staggered-grid finite-difference method for elastic wave propagation with Higdon Absorbing Boundary Conditions.
+MIT

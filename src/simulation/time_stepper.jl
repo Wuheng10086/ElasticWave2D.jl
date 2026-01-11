@@ -7,7 +7,7 @@
 # Visualization is handled through callbacks - core logic stays pure.
 # ==============================================================================
 
-using ProgressMeter
+# ProgressMeter is already imported in main module
 
 """
     TimeStepInfo

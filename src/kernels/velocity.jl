@@ -130,36 +130,27 @@ end
 # CUDA Implementation - OPTIMIZED
 # ==============================================================================
 
-# Simple optimized kernel without shared memory (good performance, simple code)
+# Simple optimized kernel - uses loop like original but with buoyancy
 function _update_velocity_kernel_optimized!(vx, vz, txx, tzz, txz, bx, bz,
-                                             a1, a2, a3, a4,
-                                             nx, nz, dtx, dtz, M_order)
+                                             a, nx, nz, dtx, dtz, M_order)
     i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     j = (blockIdx().y - 1) * blockDim().y + threadIdx().y
     
     if i > M_order && i <= nx - M_order && j > M_order && j <= nz - M_order
-        # Unrolled 8th order stencil
+        dtxxdx, dtxzdz, dtxzdx, dtzzdz = 0.0f0, 0.0f0, 0.0f0, 0.0f0
+        
+        # Loop over FD coefficients (same as original)
+        for l in 1:M_order
+            @inbounds begin
+                dtxxdx += a[l] * (txx[i+l-1, j] - txx[i-l, j])
+                dtxzdz += a[l] * (txz[i, j+l-1] - txz[i, j-l])
+                dtxzdx += a[l] * (txz[i+l, j] - txz[i-l+1, j])
+                dtzzdz += a[l] * (tzz[i, j+l] - tzz[i, j-l+1])
+            end
+        end
+        
+        # OPTIMIZED: multiply by buoyancy instead of divide by rho
         @inbounds begin
-            dtxxdx = a1 * (txx[i,   j] - txx[i-1, j]) +
-                     a2 * (txx[i+1, j] - txx[i-2, j]) +
-                     a3 * (txx[i+2, j] - txx[i-3, j]) +
-                     a4 * (txx[i+3, j] - txx[i-4, j])
-            
-            dtxzdz = a1 * (txz[i, j]   - txz[i, j-1]) +
-                     a2 * (txz[i, j+1] - txz[i, j-2]) +
-                     a3 * (txz[i, j+2] - txz[i, j-3]) +
-                     a4 * (txz[i, j+3] - txz[i, j-4])
-            
-            dtxzdx = a1 * (txz[i+1, j] - txz[i,   j]) +
-                     a2 * (txz[i+2, j] - txz[i-1, j]) +
-                     a3 * (txz[i+3, j] - txz[i-2, j]) +
-                     a4 * (txz[i+4, j] - txz[i-3, j])
-            
-            dtzzdz = a1 * (tzz[i, j+1] - tzz[i, j])   +
-                     a2 * (tzz[i, j+2] - tzz[i, j-1]) +
-                     a3 * (tzz[i, j+3] - tzz[i, j-2]) +
-                     a4 * (tzz[i, j+4] - tzz[i, j-3])
-            
             bx_ij = bx[i, j]
             bz_ij = bz[i, j]
             vx[i, j] += bx_ij * (dtx * dtxxdx + dtz * dtxzdz)
@@ -176,18 +167,11 @@ function update_velocity!(::CUDABackend, W::Wavefield, M::Medium, a::CuVector{Fl
     threads = (32, 8)
     blocks = (cld(nx, 32), cld(nz, 8))
     
-    # Extract FD coefficients (assuming 8th order, padded if lower)
-    a_host = Array(a)
-    a1 = length(a_host) >= 1 ? a_host[1] : 0.0f0
-    a2 = length(a_host) >= 2 ? a_host[2] : 0.0f0
-    a3 = length(a_host) >= 3 ? a_host[3] : 0.0f0
-    a4 = length(a_host) >= 4 ? a_host[4] : 0.0f0
-    
+    # Pass CuVector directly to kernel - no CPU copy!
     @cuda threads=threads blocks=blocks _update_velocity_kernel_optimized!(
         W.vx, W.vz, W.txx, W.tzz, W.txz, 
-        M.buoy_vx, M.buoy_vz,  # Use buoyancy!
-        a1, a2, a3, a4,
-        nx, nz, p.dtx, p.dtz, p.M
+        M.buoy_vx, M.buoy_vz,
+        a, nx, nz, p.dtx, p.dtz, p.M
     )
     return nothing
 end

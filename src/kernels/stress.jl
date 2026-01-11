@@ -142,34 +142,25 @@ end
 # ==============================================================================
 
 function _update_stress_kernel_optimized!(txx, tzz, txz, vx, vz, lam, lam_2mu, mu_txz,
-                                          a1, a2, a3, a4,
-                                          nx, nz, dtx, dtz, M_order)
+                                          a, nx, nz, dtx, dtz, M_order)
     i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     j = (blockIdx().y - 1) * blockDim().y + threadIdx().y
     
     if i > M_order && i <= nx - M_order && j > M_order && j <= nz - M_order
+        dvxdx, dvzdz, dvxdz, dvzdx = 0.0f0, 0.0f0, 0.0f0, 0.0f0
+        
+        # Loop over FD coefficients (same as original)
+        for l in 1:M_order
+            @inbounds begin
+                dvxdx += a[l] * (vx[i+l, j] - vx[i-l+1, j])
+                dvzdz += a[l] * (vz[i, j+l-1] - vz[i, j-l])
+                dvxdz += a[l] * (vx[i, j+l] - vx[i, j-l+1])
+                dvzdx += a[l] * (vz[i+l-1, j] - vz[i-l, j])
+            end
+        end
+        
+        # OPTIMIZED: use precomputed lam_2mu
         @inbounds begin
-            # Unrolled 8th order stencil
-            dvxdx = a1 * (vx[i+1, j] - vx[i,   j]) +
-                    a2 * (vx[i+2, j] - vx[i-1, j]) +
-                    a3 * (vx[i+3, j] - vx[i-2, j]) +
-                    a4 * (vx[i+4, j] - vx[i-3, j])
-            
-            dvzdz = a1 * (vz[i, j]   - vz[i, j-1]) +
-                    a2 * (vz[i, j+1] - vz[i, j-2]) +
-                    a3 * (vz[i, j+2] - vz[i, j-3]) +
-                    a4 * (vz[i, j+3] - vz[i, j-4])
-            
-            dvxdz = a1 * (vx[i, j+1] - vx[i, j])   +
-                    a2 * (vx[i, j+2] - vx[i, j-1]) +
-                    a3 * (vx[i, j+3] - vx[i, j-2]) +
-                    a4 * (vx[i, j+4] - vx[i, j-3])
-            
-            dvzdx = a1 * (vz[i,   j] - vz[i-1, j]) +
-                    a2 * (vz[i+1, j] - vz[i-2, j]) +
-                    a3 * (vz[i+2, j] - vz[i-3, j]) +
-                    a4 * (vz[i+3, j] - vz[i-4, j])
-            
             l_val = lam[i, j]
             lam_2mu_val = lam_2mu[i, j]
             
@@ -191,18 +182,11 @@ function update_stress!(::CUDABackend, W::Wavefield, M::Medium, a::CuVector{Floa
     threads = (32, 8)
     blocks = (cld(nx, 32), cld(nz, 8))
     
-    # Extract FD coefficients
-    a_host = Array(a)
-    a1 = length(a_host) >= 1 ? a_host[1] : 0.0f0
-    a2 = length(a_host) >= 2 ? a_host[2] : 0.0f0
-    a3 = length(a_host) >= 3 ? a_host[3] : 0.0f0
-    a4 = length(a_host) >= 4 ? a_host[4] : 0.0f0
-    
+    # Pass CuVector directly - no CPU copy!
     @cuda threads=threads blocks=blocks _update_stress_kernel_optimized!(
         W.txx, W.tzz, W.txz, W.vx, W.vz, 
         M.lam, M.lam_2mu, M.mu_txz,
-        a1, a2, a3, a4,
-        nx, nz, p.dtx, p.dtz, p.M
+        a, nx, nz, p.dtx, p.dtz, p.M
     )
     return nothing
 end

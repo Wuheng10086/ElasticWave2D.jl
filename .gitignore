@@ -1,32 +1,140 @@
-# Julia generated files
+# ==============================================================================
+# Fomo.jl .gitignore
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Julia
+# ------------------------------------------------------------------------------
+# Compiled files
 *.jl.cov
 *.jl.*.cov
 *.jl.mem
+
+# Julia package manager
 Manifest.toml
 
-# Build artifacts
-/docs/build/
-/docs/site/
+# Compiled Julia binaries
+*.ji
+*.o
+*.a
+*.so
+*.dylib
+*.dll
 
-# Output directories
-/output/
-/outputs/
+# Precompilation cache
+**/.julia/
+*.jl.*.cov
+
+# ------------------------------------------------------------------------------
+# Project outputs
+# ------------------------------------------------------------------------------
+# Simulation outputs
+outputs/
+outputs_*/
+results/
+
+# Video files
+*.mp4
+*.avi
+*.mov
+*.gif
+
+# Large data files
 *.bin
 *.dat
+*.raw
 
-# Large model files
-*.jld2
-!test/*.jld2
+# Seismic data formats
+*.segy
+*.sgy
+*.su
 
-# IDE
+# HDF5 and JLD2 (model files - keep examples, ignore generated)
+# *.jld2
+# *.h5
+# *.hdf5
+
+# Images (generated plots)
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+
+# ------------------------------------------------------------------------------
+# Editors and IDEs
+# ------------------------------------------------------------------------------
+# VSCode
 .vscode/
+*.code-workspace
+
+# JetBrains (IntelliJ, PyCharm, etc.)
 .idea/
+*.iml
+
+# Vim
 *.swp
 *.swo
+*~
 
-# OS
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ------------------------------------------------------------------------------
+# OS generated
+# ------------------------------------------------------------------------------
+# macOS
 .DS_Store
-Thumbs.db
+.AppleDouble
+.LSOverride
+._*
 
-# Jupyter
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# ------------------------------------------------------------------------------
+# Temporary files
+# ------------------------------------------------------------------------------
+*.tmp
+*.temp
+*.log
+*.bak
+*.backup
+
+# Jupyter notebooks checkpoints
 .ipynb_checkpoints/
+
+# ------------------------------------------------------------------------------
+# Documentation build
+# ------------------------------------------------------------------------------
+docs/build/
+docs/site/
+
+# ------------------------------------------------------------------------------
+# Testing
+# ------------------------------------------------------------------------------
+coverage/
+*.lcov
+
+# ------------------------------------------------------------------------------
+# Keep these (use ! to negate patterns)
+# ------------------------------------------------------------------------------
+# Keep example data files
+!examples/*.jld2
+!data/*.jld2
+
+# Keep documentation images
+!docs/src/assets/*.png
+!docs/src/assets/*.svg

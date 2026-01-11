@@ -1,14 +1,39 @@
 # ==============================================================================
-# Fomo.jl - Forward Modeling (OPTIMIZED)
+# Fomo.jl - Forward Modeling
 #
 # High-Performance 2D Elastic Wave Simulation Framework
-# 
-# OPTIMIZATIONS in this version:
-# - Precomputed buoyancy (1/rho) eliminates divisions in hot loops
-# - Precomputed lam_2mu (lambda + 2*mu) reduces computation
-# - Unrolled FD stencils for common orders (4th, 8th)
-# - Optimized GPU thread block configuration (32x8)
-# - Better memory access patterns with @simd vectorization
+#
+# Project Structure:
+# ==================
+# src/
+# ├── Fomo.jl                 # Main module
+# ├── backends/               # Hardware abstraction
+# │   └── backend.jl          # CPU/CUDA backend
+# ├── types/                  # Data structures
+# │   ├── structures.jl       # Core types (Wavefield, Medium, Source, etc.)
+# │   └── model.jl            # VelocityModel and related
+# ├── kernels/                # Compute kernels (hot loops)
+# │   ├── velocity.jl         # Velocity update
+# │   ├── stress.jl           # Stress update  
+# │   ├── boundary.jl         # HABC, free surface
+# │   ├── source_receiver.jl  # Source injection, receiver recording
+# │   └── ibm.jl              # Immersed Boundary Method
+# ├── surface/                # Irregular surface handling
+# │   └── irregular.jl        # Surface initialization and helpers
+# ├── simulation/             # Simulation control
+# │   ├── init.jl             # Medium/wavefield initialization
+# │   ├── time_stepper.jl     # Time stepping (regular)
+# │   ├── time_stepper_ibm.jl # Time stepping (irregular surface)
+# │   ├── shots.jl            # Shot management
+# │   └── parallel.jl         # Multi-GPU parallel execution
+# ├── io/                     # Input/Output
+# │   ├── model_io.jl         # Model load/save
+# │   ├── gather_io.jl        # Gather/results save/load
+# │   └── geometry_io.jl      # Survey geometry
+# └── visualization/          # Plotting and video
+#     ├── video.jl            # Wavefield video recording
+#     └── plots.jl            # Static plots
+#
 # ==============================================================================
 
 module Fomo
@@ -30,7 +55,6 @@ using CUDA
 # CUDA Support
 # ==============================================================================
 
-# Check if CUDA is functional (has GPU)
 const CUDA_AVAILABLE = Ref(false)
 
 function __init__()
@@ -49,83 +73,105 @@ is_cuda_functional() = CUDA_AVAILABLE[]
 # Exports
 # ==============================================================================
 
-# Backend system
+# --- Backend ---
 export AbstractBackend, CPUBackend, CUDABackend
 export CPU_BACKEND, CUDA_BACKEND
 export backend, to_device, synchronize
 export is_cuda_available, is_cuda_functional
 
-# Data structures
+# --- Types ---
 export Wavefield, Medium, HABCConfig
 export Source, Receivers, SimParams
 export ShotConfig, MultiShotConfig, ShotResult
+export VelocityModel
 
-# Initialization
+# --- Irregular Surface ---
+export IrregularSurface, IrregularSurfaceGPU
+export SurfacePoint, GhostPoint
+export init_irregular_surface, init_flat_surface
+export setup_irregular_source, setup_irregular_receivers, setup_surface_receivers
+export is_irregular_surface_enabled, to_gpu
+
+# --- Initialization ---
 export init_medium, init_habc, setup_receivers
 export get_fd_coefficients, ricker_wavelet
 
-# Kernels (for advanced users)
+# --- Kernels (advanced) ---
 export update_velocity!, update_stress!
 export apply_habc!, apply_habc_velocity!, apply_habc_stress!
 export backup_boundary!, apply_free_surface!
+export apply_irregular_free_surface!
 export inject_source!, record_receivers!, reset!
 
-# Simulation interface
+# --- Simulation ---
 export TimeStepInfo
 export time_step!, run_time_loop!
+export time_step_irregular!, run_time_loop_irregular!
 export run_shot!, run_shots!
+export run_shot_irregular!, run_shots_irregular!
+export run_shots_auto_irregular!
 
-# Parallel execution
+# --- High-level API ---
+export SimulationConfig, SimulationResult, simulate!
+export IrregularSurfaceConfig, simulate_irregular!
+
+# --- Surface shape helpers ---
+export flat_surface, sinusoidal_surface, gaussian_valley, gaussian_hill
+export tilted_surface, step_surface, random_surface, combine_surfaces
+
+# --- Parallel ---
 export get_gpu_info, print_hardware_info
 export run_shots_multi_gpu!, run_shots_auto!
 
-# Visualization
-export VideoConfig, VideoRecorder, MultiFieldRecorder
-export plot_setup, generate_video
+# --- Visualization ---
+export VideoConfig, FieldRecorder, MultiFieldRecorder
+export generate_video
+export plot_setup, plot_irregular_setup
+export plot_surface_comparison, plot_gather_with_surface
 
-# IO
+# --- IO ---
 export save_gather, load_gather
-
-# Model IO
-export VelocityModel, load_model, load_model_files, save_model, convert_model, model_info
-
-# Geometry IO (for migration)
+export load_model, load_model_files, save_model
+export convert_model, model_info, resample_model, suggest_grid_spacing
 export SurveyGeometry, MultiShotGeometry
 export create_geometry, save_geometry, load_geometry
 
 # ==============================================================================
-# Include Files (order matters!)
+# Include Files
 # ==============================================================================
 
-# Backend abstraction (must be first)
+# 1. Backend (must be first - defines AbstractBackend)
 include("backends/backend.jl")
 
-# Core structures (OPTIMIZED - now includes buoyancy fields)
-include("core/structures.jl")
+# 2. Types (data structures)
+include("types/structures.jl")
+include("types/model.jl")
 
-# Kernels (OPTIMIZED - uses buoyancy, unrolled loops)
+# 3. Surface (MUST be before ibm.jl - defines IrregularSurface)
+include("surface/irregular.jl")
+
+# 4. Kernels (compute-intensive code)
 include("kernels/velocity.jl")
 include("kernels/stress.jl")
 include("kernels/boundary.jl")
 include("kernels/source_receiver.jl")
+include("kernels/ibm.jl")  # Uses IrregularSurface from irregular.jl
 
-# IO (must be before utils/init.jl which uses VelocityModel)
-include("io/output.jl")
-include("io/model_loader.jl")
+# 5. Visualization (MUST be before api.jl - defines VideoConfig)
+include("visualization/video.jl")
+include("visualization/plots.jl")
 
-# Utilities (OPTIMIZED - precomputes buoyancy and lam_2mu)
-include("utils/init.jl")
+# 6. Simulation - ORDER IS CRITICAL HERE!
+include("simulation/init.jl")
+include("simulation/time_stepper.jl")      # Defines run_time_loop!
+include("simulation/shots.jl")             # Uses run_time_loop!, defines MultiShotConfig
+include("simulation/time_stepper_ibm.jl")  # Uses MultiShotConfig
+include("simulation/parallel.jl")
+include("simulation/api.jl")               # High-level API (uses VideoConfig)
 
-# Geometry IO (ShotResult is now in structures.jl)
+# 7. IO (file operations)
+include("io/model_io.jl")
+include("io/gather_io.jl")
 include("io/geometry_io.jl")
-
-# Simulation
-include("simulation/time_stepper.jl")
-include("simulation/shot_manager.jl")
-include("simulation/parallel_shots.jl")
-
-# Visualization
-include("visualization/video_recorder.jl")
-include("visualization/setup_check.jl")
 
 end # module Fomo

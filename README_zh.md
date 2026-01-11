@@ -10,9 +10,10 @@
 ## ✨ 特性
 
 - 🚀 **后端调度架构** - 一套代码，CPU/GPU 自动切换
-- 📐 **高阶交错网格有限差分** - 支持 2 至 8 阶空间精度
+- 📐 **高阶交错网格有限差分** - 支持 2 至 10 阶空间精度
 - 🛡️ **混合吸收边界 (HABC)** - 有效抑制边界反射
 - 🌊 **自由地表建模** - 准确模拟 Rayleigh 面波
+- 🏔️ **不规则地形 (IBM)** - 浸入边界法处理复杂地表
 - ⚡ **多 GPU 并行** - 自动负载均衡，榨干显卡性能
 - 📁 **多格式支持** - SEG-Y、Binary、MAT、NPY、HDF5、JLD2
 - 🎬 **视频录制** - 实时波场可视化
@@ -53,71 +54,130 @@ Pkg.add("HDF5")    # HDF5 文件
 
 ## 🚀 快速开始
 
+### 高层 API（推荐）
+
 ```julia
 using Fomo
 
 # 创建速度模型
-vp = fill(3000.0f0, 200, 100)
-vs = fill(1800.0f0, 200, 100)
-rho = fill(2200.0f0, 200, 100)
+nx, nz = 400, 200
+dx = 10.0f0
 
-# 添加一个层
-vp[:, 50:end] .= 4000.0f0
-vs[:, 50:end] .= 2400.0f0
+vp = fill(3000.0f0, nz, nx)
+vs = fill(1800.0f0, nz, nx)
+rho = fill(2200.0f0, nz, nx)
 
-model = VelocityModel(vp, vs, rho, 10.0f0, 10.0f0; name="双层模型")
+vp[100:end, :] .= 4000.0f0
+vs[100:end, :] .= 2400.0f0
 
-# 自动选择后端（有 GPU 就用 GPU）
-be = is_cuda_available() ? backend(:cuda) : backend(:cpu)
+model = VelocityModel(vp, vs, rho, dx, dx; name="双层模型")
 
-# 初始化模拟
-nbc, fd_order = 50, 8
-medium = init_medium(model, nbc, fd_order, be; free_surface=true)
+# 不录制视频运行模拟
+result = simulate!(
+    model,
+    2000.0f0, 50.0f0,                    # 震源 (x, z)
+    Float32.(100:20:3900),               # 检波器 x 坐标
+    fill(10.0f0, 190);                   # 检波器 z 坐标
+    config = SimulationConfig(nt=3000, f0=15.0f0, output_dir="outputs")
+)
 
-# 时间步进
-dt = 0.5f0 * 10.0f0 / maximum(vp)
-nt = 2000
-habc = init_habc(medium.nx, medium.nz, nbc, dt, 10.0f0, 10.0f0, 3500.0f0, be)
-params = SimParams(dt, nt, 10.0f0, 10.0f0, fd_order)
+# 录制视频运行模拟 - VideoConfig 是独立参数
+result = simulate!(
+    model,
+    2000.0f0, 50.0f0,
+    Float32.(100:20:3900),
+    fill(10.0f0, 190);
+    config = SimulationConfig(nt=3000, f0=15.0f0, output_dir="outputs"),
+    video_config = VideoConfig(fields=[:vz], skip=5, fps=30)
+)
 
-# 观测系统
-rec_x = Float32.(0:20:1990)
-rec_z = fill(10.0f0, length(rec_x))
-rec = setup_receivers(rec_x, rec_z, medium; type=:vz)
-
-src_x = Float32[1000.0]
-src_z = Float32[20.0]
-wavelet = ricker_wavelet(15.0f0, dt, nt)
-shots = MultiShotConfig(src_x, src_z, wavelet)
-
-# 运行模拟
-fd_coeffs = to_device(get_fd_coefficients(fd_order), be)
-wavefield = Wavefield(medium.nx, medium.nz, be)
-results = run_shots!(be, wavefield, medium, habc, fd_coeffs, rec, shots, params)
-
-# 保存结果
-save_gather(results[1], "gather.bin")
+# 自动保存结果：
+# - outputs/gather.bin
+# - outputs/gather.png  
+# - outputs/wavefield_vz.mp4（如果提供了 video_config）
 ```
 
-## 📁 加载模型
+### 不规则自由表面
 
 ```julia
 using Fomo
 
-# 从 JLD2 加载（推荐）
-model = load_model("marmousi.jld2")
+# 创建模型
+model = VelocityModel(vp, vs, rho, dx, dx)
 
-# 从分离的 SEG-Y 文件加载（需要 SegyIO）
-using SegyIO
-model = load_model_files(
-    vp = "vp.segy",
-    vs = "vs.segy", 
-    rho = "rho.segy",
-    dx = 12.5
+# 使用辅助函数定义地表形状
+z_surface = sinusoidal_surface(nx, dx; 
+    base_depth=50, amplitude=30, wavelength=1000)
+
+# 或组合多种形状
+z_surface = combine_surfaces(
+    sinusoidal_surface(nx, dx; amplitude=20),
+    gaussian_valley(nx, dx; valley_depth=25, width=300)
 )
 
-# 保存为 JLD2 格式，下次加载更快
-save_model("model.jld2", model)
+# 或完全自定义
+x = Float32.((0:nx-1) .* dx)
+z_surface = Float32.(50.0 .+ 20.0 .* sin.(2π .* x ./ 1000.0))
+
+# 运行模拟 - video_config 是独立参数
+result = simulate_irregular!(
+    model,
+    z_surface,                           # 你定义的地表形状
+    2000.0f0,                            # 震源 x 坐标
+    Float32.(100:20:3900);               # 检波器 x 坐标
+    config = IrregularSurfaceConfig(
+        nt = 3000,
+        ibm_method = :direct_zero,       # 或 :mirror 更高精度
+        src_depth = 30.0f0,              # 地表以下深度
+        output_dir = "outputs_irregular"
+    ),
+    video_config = VideoConfig(fields=[:vz], skip=10)
+)
+```
+
+### 地形辅助函数
+
+| 函数 | 描述 |
+|------|------|
+| `flat_surface(nx, dx, depth)` | 平坦地表 |
+| `sinusoidal_surface(nx, dx; amplitude, wavelength)` | 正弦地表 |
+| `gaussian_valley(nx, dx; valley_depth, width)` | 高斯谷地 |
+| `gaussian_hill(nx, dx; hill_height, width)` | 高斯山丘 |
+| `tilted_surface(nx, dx; depth_left, depth_right)` | 倾斜地表 |
+| `step_surface(nx, dx; depth_left, depth_right)` | 阶梯/悬崖 |
+| `random_surface(nx, dx; amplitude, smoothness)` | 随机粗糙地表 |
+| `combine_surfaces(s1, s2, ...)` | 组合多种形状 |
+
+## 🔧 底层 API
+
+对于需要完全控制的高级用户：
+
+```julia
+using Fomo
+
+# 后端选择
+be = is_cuda_available() ? backend(:cuda) : backend(:cpu)
+
+# 初始化组件
+medium = init_medium(model, nbc, fd_order, be; free_surface=true)
+habc = init_habc(medium.nx, medium.nz, nbc, dt, dx, dz, vp_max, be)
+fd_coeffs = to_device(get_fd_coefficients(fd_order), be)
+wavefield = Wavefield(medium.nx, medium.nz, be)
+params = SimParams(dt, nt, dx, dz, fd_order)
+
+# 设置震源和检波器
+src = Source(src_i, src_j, to_device(wavelet, be))
+rec = Receivers(to_device(rec_i, be), to_device(rec_j, be), 
+                to_device(zeros(Float32, nt, n_rec), be), :vz)
+
+# 带回调函数运行时间循环
+run_time_loop!(be, wavefield, medium, habc, fd_coeffs, src, rec, params;
+    progress = true,
+    on_step = (W, info) -> begin
+        # 自定义每步操作
+        return true
+    end
+)
 ```
 
 ## ⚡ 多 GPU 并行
@@ -143,63 +203,57 @@ results = run_shots_auto!(
 )
 ```
 
-## 🔍 设置验证
-
-运行大规模模拟前，先检查观测系统设置：
-
-```julia
-using Fomo
-
-model = load_model("model.jld2")
-
-# 定义震源和检波器
-src_x = Float32.(100:200:3000)
-src_z = fill(10.0f0, length(src_x))
-rec_x = Float32.(0:15:3500)
-rec_z = fill(50.0f0, length(rec_x))
-
-# 生成设置检查图
-plot_setup(model, src_x, src_z, rec_x, rec_z; 
-           output="setup_check.png",
-           title="观测系统设置")
-```
-
 ## 🎬 视频录制
 
 ```julia
 using Fomo
 
-# 配置视频录制
+# 配置视频
 config = VideoConfig(
-    fields = [:p],      # 录制压力场
+    fields = [:vz],     # 录制 vz 分量（可选 :vx, :vz, :vel, :p）
     skip = 10,          # 每 10 步保存一帧
-    downsample = 2      # 空间降采样
+    downsample = 1      # 空间降采样
 )
 
 recorder = MultiFieldRecorder(medium.nx, medium.nz, dt, config)
 
 # 带录制回调运行
-results = run_shots!(be, wavefield, medium, habc, fd_coeffs,
-                     rec, shots, params;
-                     on_step = recorder)
+run_time_loop!(be, wavefield, medium, habc, fd_coeffs, src, rec, params;
+    on_step = (W, info) -> begin
+        Fomo.record!(recorder.recorder, W, info.k, dt)
+        return true
+    end
+)
 
-# 生成 MP4 视频
-generate_video(recorder.recorder, "wavefield.mp4"; fps=30)
+# 生成 MP4
+generate_video(recorder.recorder, "wavefield.mp4"; fps=30, colormap=:seismic)
 ```
 
-## 🛠️ 命令行工具
+## 📁 模型读写
 
-```bash
-# 转换模型格式
-julia --project=. scripts/convert_model.jl \
-    --vp=vp.segy --vs=vs.segy --rho=rho.segy \
-    -o model.jld2 --dx=12.5 --transpose
+```julia
+using Fomo
 
-# 检查模型维度
-julia --project=. scripts/check_model.jl model.jld2 --fix
+# 从 JLD2 加载（推荐）
+model = load_model("marmousi.jld2")
 
-# 运行并行模拟
-julia --project=. examples/run_parallel.jl model.jld2 outputs/
+# 从分离的 SEG-Y 文件加载（需要 SegyIO）
+using SegyIO
+model = load_model_files(
+    vp = "vp.segy",
+    vs = "vs.segy", 
+    rho = "rho.segy",
+    dx = 12.5
+)
+
+# 查看模型信息
+model_info(model)
+
+# 重采样模型
+model_sim = resample_model(model, 10.0, 10.0; method=:linear)
+
+# 保存为 JLD2
+save_model("model.jld2", model)
 ```
 
 ## 📂 项目结构
@@ -207,17 +261,63 @@ julia --project=. examples/run_parallel.jl model.jld2 outputs/
 ```
 Fomo.jl/
 ├── src/
-│   ├── Fomo.jl              # 主模块
-│   ├── backends/            # CPU/CUDA 抽象层
-│   ├── kernels/             # 有限差分核函数
-│   ├── simulation/          # 炮管理
-│   ├── io/                  # 模型/观测系统 I/O
-│   └── visualization/       # 绑图 & 视频
-├── examples/                # 使用示例
-├── scripts/                 # 命令行工具
-├── test/                    # 单元测试
-└── docs/                    # 文档
+│   ├── Fomo.jl                 # 主模块
+│   ├── backends/               # CPU/CUDA 抽象层
+│   │   └── backend.jl
+│   ├── types/                  # 数据结构
+│   │   ├── structures.jl
+│   │   └── model.jl
+│   ├── kernels/                # 有限差分核函数
+│   │   ├── velocity.jl
+│   │   ├── stress.jl
+│   │   ├── boundary.jl
+│   │   ├── source_receiver.jl
+│   │   └── ibm.jl
+│   ├── surface/                # 不规则地表
+│   │   └── irregular.jl
+│   ├── simulation/             # 时间步进与炮管理
+│   │   ├── init.jl
+│   │   ├── time_stepper.jl
+│   │   ├── time_stepper_ibm.jl
+│   │   ├── shots.jl
+│   │   ├── parallel.jl
+│   │   └── api.jl              # 高层 API
+│   ├── io/                     # 模型/数据读写
+│   │   ├── model_io.jl
+│   │   ├── gather_io.jl
+│   │   └── geometry_io.jl
+│   └── visualization/          # 绑图与视频
+│       ├── video.jl
+│       └── plots.jl
+├── examples/
+│   ├── run_demo.jl                    # 综合演示
+│   ├── run_regular_surface_video.jl  # 面波可视化
+│   └── run_irregular_with_video.jl   # 不规则地形示例
+├── test/
+└── docs/
 ```
+
+## 🏔️ IBM：不规则自由表面
+
+浸入边界法 (IBM) 无需细化网格即可准确模拟复杂地形：
+
+| 方法 | 网格规模 | 时间步数 | 总成本 |
+|------|----------|----------|--------|
+| 细网格 + 阶梯逼近 | 4N | 2T | **8×** |
+| **IBM（本方法）** | N | T | **1.08×** |
+
+两种 IBM 方法可选：
+- `:direct_zero` - 稳定，推荐大多数情况使用
+- `:mirror` - 更高精度，可能需要更小时间步
+
+## 🚀 性能优化
+
+| 优化措施 | 加速比 | 描述 |
+|----------|--------|------|
+| 预计算浮力 (1/ρ) | 15-25% | 消除速度更新中的除法 |
+| 预计算 λ+2μ | 5-10% | 减少应力更新计算量 |
+| 展开 FD 模板 | 10-15% | 更好的 SIMD 向量化 |
+| 优化 GPU 块 (32×8) | 10-20% | 更好的内存合并访问 |
 
 ## 🧪 运行测试
 
@@ -226,7 +326,20 @@ cd Fomo.jl
 julia --project=. -e "using Pkg; Pkg.test()"
 ```
 
-## 📚 API 概览
+## 📚 API 参考
+
+### 配置结构体
+- `SimulationConfig` - 规则地表模拟配置
+- `IrregularSurfaceConfig` - 不规则地表模拟配置
+- `SimulationResult` - 结果容器，包含数据和文件路径
+
+### 高层函数
+- `simulate!()` - 运行规则地表模拟
+- `simulate_irregular!()` - 运行不规则地表模拟
+
+### 地形辅助函数
+- `flat_surface()`, `sinusoidal_surface()`, `gaussian_valley()` 等
+- `combine_surfaces()` - 组合多种地形
 
 ### 核心类型
 - `VelocityModel` - 速度模型容器
@@ -234,13 +347,12 @@ julia --project=. -e "using Pkg; Pkg.test()"
 - `Wavefield` - 波场数组 (vx, vz, txx, tzz, txz)
 - `SimParams` - 模拟参数
 
-### 主要函数
+### 底层函数
 - `init_medium()` - 初始化计算介质
 - `init_habc()` - 初始化吸收边界
+- `run_time_loop!()` - 带回调运行时间循环
 - `run_shots!()` - 顺序执行多炮
 - `run_shots_auto!()` - 自动多 GPU 并行
-- `load_model()` / `save_model()` - 模型读写
-- `plot_setup()` - 可视化观测系统
 
 ## 📖 参考文献
 

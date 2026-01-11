@@ -221,34 +221,44 @@ function run_shots_multi_gpu!(
             # Process assigned shots
             for shot_id in shot_ids
                 # Reset wavefield
-                reset!(wavefield)
+                reset!(be, wavefield)
                 
                 # Create source
                 src_i = round(Int, (src_x[shot_id] + nbc * dx) / dx) + 1
                 src_j = round(Int, (src_z[shot_id] + nbc * dz) / dz) + 1
-                source = Source(src_x[shot_id], src_z[shot_id], src_i, src_j,
-                              to_device(wavelet, be))
+                source = Source(src_i, src_j, to_device(wavelet, be))
                 
                 # Create receiver for this shot
+                rec_i_gpu = CuArray(Int32.(Array(rec_template.i)))
+                rec_j_gpu = CuArray(Int32.(Array(rec_template.j)))
                 receivers = Receivers(
-                    rec_template.x, rec_template.z,
-                    rec_template.i_idx, rec_template.j_idx,
+                    rec_i_gpu, rec_j_gpu,
                     CUDA.zeros(Float32, params.nt, length(rec_x)),
                     rec_template.type
                 )
                 
                 # Time loop
                 for it in 1:params.nt
+                    # 1. Backup boundary
+                    backup_boundary!(be, wavefield, habc, medium)
+                    
+                    # 2. Source injection
+                    inject_source!(be, wavefield, source, it, params.dt)
+                    
+                    # 3. Velocity update + HABC
                     update_velocity!(be, wavefield, medium, fd_coeffs, params)
                     apply_habc_velocity!(be, wavefield, habc, medium)
+                    
+                    # 4. Stress update + HABC
                     update_stress!(be, wavefield, medium, fd_coeffs, params)
                     apply_habc_stress!(be, wavefield, habc, medium)
                     
-                    if medium.free_surface
-                        apply_free_surface!(be, wavefield, medium, params)
+                    # 5. Free surface
+                    if medium.is_free_surface
+                        apply_free_surface!(be, wavefield, medium)
                     end
                     
-                    inject_source!(be, wavefield, source, it, params)
+                    # 6. Record receivers
                     record_receivers!(be, wavefield, receivers, it)
                 end
                 
@@ -256,11 +266,11 @@ function run_shots_multi_gpu!(
                 
                 # Create result
                 result = ShotResult(
-                    Array(receivers.gather),
+                    Array(receivers.data),
                     shot_id,
                     source.i, source.j,
-                    Array(receivers.i_idx),
-                    Array(receivers.j_idx)
+                    Vector{Int}(Array(receivers.i)),
+                    Vector{Int}(Array(receivers.j))
                 )
                 
                 # Store result (thread-safe)
