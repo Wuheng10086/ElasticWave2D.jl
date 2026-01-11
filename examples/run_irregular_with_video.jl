@@ -52,7 +52,7 @@ result = simulate_irregular!(
     config=IrregularSurfaceConfig(
         nt=3000,
         f0=15.0f0,
-        ibm_method=:direct_zero,
+        ibm_method=:mirror,
         src_depth=30.0f0,
         output_dir="outputs/example1_sinusoidal"
     ),
@@ -91,7 +91,7 @@ result2 = simulate_irregular!(
     model, z_custom, 2500.0f0, Float32.(100:20:3900);
     config=IrregularSurfaceConfig(
         nt=3000,
-        ibm_method=:direct_zero,
+        ibm_method=:mirror,
         src_depth=40.0f0,
         output_dir="outputs/example2_custom"
     ),

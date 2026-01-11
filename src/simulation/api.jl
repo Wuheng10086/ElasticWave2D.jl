@@ -9,22 +9,34 @@
 # ==============================================================================
 
 """
-    SimulationConfig
+    SimulationConfig(; kwargs...)
 
-Configuration for regular surface simulation.
+Configuration for regular (flat) free surface simulation.
 
-# Fields
-- `nbc`: Absorbing boundary layers (default: 50)
-- `fd_order`: Finite difference order (default: 8)
-- `dt`: Time step, auto-computed if nothing (default: nothing)
-- `nt`: Number of time steps (default: 3000)
-- `cfl`: CFL number for auto dt computation (default: 0.4)
-- `f0`: Source dominant frequency in Hz (default: 15.0)
-- `free_surface`: Enable free surface at top (default: true)
-- `output_dir`: Output directory (default: "outputs")
-- `save_gather`: Save gather to binary file (default: true)
-- `show_progress`: Show progress bar (default: true)
-- `plot_gather`: Save gather plot as PNG (default: true)
+# Keyword Arguments
+- `nbc::Int = 50`: Number of absorbing boundary layers (PML/HABC)
+- `fd_order::Int = 8`: Finite difference order, must be even. Options: `2`, `4`, `6`, `8`, `10`
+- `dt::Union{Float32, Nothing} = nothing`: Time step in seconds. If `nothing`, auto-computed from CFL condition
+- `nt::Int = 3000`: Number of time steps
+- `cfl::Float32 = 0.4f0`: CFL number for auto time step computation (typically 0.3-0.5)
+- `f0::Float32 = 15.0f0`: Source dominant frequency in Hz
+- `free_surface::Bool = true`: Enable free surface at top boundary
+- `output_dir::String = "outputs"`: Directory for output files
+- `save_gather::Bool = true`: Save seismic gather to binary file
+- `show_progress::Bool = true`: Show progress bar during simulation
+- `plot_gather::Bool = true`: Save gather plot as PNG
+
+# Example
+```julia
+config = SimulationConfig(
+    nt = 5000,
+    f0 = 20.0f0,
+    fd_order = 8,
+    output_dir = "my_outputs"
+)
+```
+
+See also: [`simulate!`](@ref), [`VideoConfig`](@ref)
 """
 Base.@kwdef struct SimulationConfig
     nbc::Int = 50
@@ -41,16 +53,48 @@ Base.@kwdef struct SimulationConfig
 end
 
 """
-    IrregularSurfaceConfig
+    IrregularSurfaceConfig(; kwargs...)
 
-Configuration for irregular surface simulation with IBM.
+Configuration for irregular free surface simulation using Immersed Boundary Method (IBM).
 
-# Fields
-All fields from SimulationConfig, plus:
-- `ibm_method`: :direct_zero (stable) or :mirror (accurate) (default: :direct_zero)
-- `ibm_iterations`: Number of IBM iterations (default: 3)
-- `src_depth`: Source depth below surface in meters (default: 30.0)
-- `rec_depth`: Receiver depth below surface in meters (default: 0.0)
+# Keyword Arguments
+- `nbc::Int = 50`: Number of absorbing boundary layers
+- `fd_order::Int = 8`: Finite difference order. Options: `2`, `4`, `6`, `8`, `10`
+- `dt::Union{Float32, Nothing} = nothing`: Time step in seconds. If `nothing`, auto-computed
+- `nt::Int = 3000`: Number of time steps
+- `cfl::Float32 = 0.5f0`: CFL number (use smaller value ~0.4 for `:mirror` method)
+- `f0::Float32 = 15.0f0`: Source dominant frequency in Hz
+- `ibm_method::Symbol = :direct_zero`: IBM boundary condition method
+  - `:direct_zero` - Directly set ghost point values to zero. **Stable**, recommended for most cases
+  - `:mirror` - Mirror/antisymmetric extrapolation. **Higher accuracy** but may need smaller time step
+- `ibm_iterations::Int = 3`: Number of IBM iterations per time step (3-5 recommended)
+- `src_depth::Float32 = 30.0f0`: Source depth below surface in meters
+- `rec_depth::Float32 = 0.0f0`: Receiver depth below surface in meters (0 = on surface)
+- `output_dir::String = "outputs"`: Directory for output files
+- `save_gather::Bool = true`: Save seismic gather to binary file
+- `show_progress::Bool = true`: Show progress bar during simulation
+- `plot_gather::Bool = true`: Save gather plot as PNG
+- `plot_model::Bool = true`: Save model setup plot as PNG
+
+# Example
+```julia
+config = IrregularSurfaceConfig(
+    nt = 4000,
+    f0 = 20.0f0,
+    ibm_method = :direct_zero,  # or :mirror
+    ibm_iterations = 3,
+    src_depth = 50.0f0,         # source 50m below surface
+    rec_depth = 0.0f0,          # receivers on surface
+    output_dir = "irregular_outputs"
+)
+```
+
+# Notes
+- `:direct_zero` is more stable and works well for most topographies
+- `:mirror` provides higher accuracy but may become unstable with sharp topography
+- If simulation becomes unstable, try reducing `cfl` to 0.3-0.4
+
+See also: [`simulate_irregular!`](@ref), [`VideoConfig`](@ref)
 """
 Base.@kwdef struct IrregularSurfaceConfig
     nbc::Int = 50
@@ -73,15 +117,25 @@ end
 """
     SimulationResult
 
-Container for simulation results.
+Container for simulation results returned by `simulate!` and `simulate_irregular!`.
 
 # Fields
-- `gather`: Recorded seismogram [nt × n_rec]
-- `dt`: Time step used
-- `nt`: Number of time steps
-- `video_file`: Path to generated video (or nothing)
-- `gather_file`: Path to saved gather (or nothing)
-- `gather_plot`: Path to gather plot (or nothing)
+- `gather::Matrix{Float32}`: Recorded seismogram, shape `[nt, n_receivers]`
+- `dt::Float32`: Time step used in simulation (seconds)
+- `nt::Int`: Number of time steps
+- `video_file::Union{String, Nothing}`: Path to generated video file, or `nothing` if no video
+- `gather_file::Union{String, Nothing}`: Path to saved gather binary file
+- `gather_plot::Union{String, Nothing}`: Path to gather plot PNG file
+
+# Example
+```julia
+result = simulate!(model, src_x, src_z, rec_x, rec_z; config=config)
+
+# Access results
+println("Gather size: ", size(result.gather))
+println("Time step: ", result.dt, " s")
+println("Video saved to: ", result.video_file)
+```
 """
 struct SimulationResult
     gather::Matrix{Float32}
@@ -97,34 +151,67 @@ end
 # ==============================================================================
 
 """
-    simulate!(model, src_x, src_z, rec_x, rec_z; config, video_config=nothing)
+    simulate!(model, src_x, src_z, rec_x, rec_z; config, video_config=nothing) -> SimulationResult
 
-Run simulation with regular (flat) free surface.
+Run elastic wave simulation with regular (flat) free surface.
+
+Automatically handles:
+- Backend selection (CPU/GPU)
+- Time step computation (if not specified)
+- Wavefield initialization
+- Source and receiver setup
+- Progress display
+- Output file generation
 
 # Arguments
-- `model::VelocityModel`: Velocity model
-- `src_x, src_z`: Source position in meters
-- `rec_x, rec_z`: Receiver position arrays in meters
-- `config`: SimulationConfig
-- `video_config`: VideoConfig for wavefield recording (optional)
+- `model::VelocityModel`: Velocity model containing vp, vs, rho arrays
+- `src_x::Real`: Source x position in meters
+- `src_z::Real`: Source z position in meters (depth from top)
+- `rec_x::Vector{<:Real}`: Receiver x positions in meters
+- `rec_z::Vector{<:Real}`: Receiver z positions in meters
+
+# Keyword Arguments
+- `config::SimulationConfig`: Simulation configuration (required)
+- `video_config::Union{VideoConfig, Nothing} = nothing`: Video recording configuration. 
+  If `nothing`, no video is recorded
 
 # Returns
-- `SimulationResult`
+- `SimulationResult`: Contains gather data and paths to output files
+
+# Output Files
+All files are saved to `config.output_dir`:
+- `gather.bin`: Binary file with seismic gather (if `save_gather=true`)
+- `gather.png`: Plot of seismic gather (if `plot_gather=true`)
+- `wavefield_<field>.mp4`: Wavefield video (if `video_config` provided)
 
 # Example
 ```julia
-model = VelocityModel(vp, vs, rho, 10.0, 10.0)
+using Fomo
+
+# Create model
+vp = fill(3000.0f0, 200, 400)
+vs = fill(1800.0f0, 200, 400)
+rho = fill(2200.0f0, 200, 400)
+model = VelocityModel(vp, vs, rho, 10.0f0, 10.0f0)
 
 # Without video
-result = simulate!(model, 1500.0, 50.0, rec_x, rec_z;
-    config = SimulationConfig(nt=3000))
+result = simulate!(
+    model,
+    2000.0f0, 50.0f0,              # source at (2000m, 50m)
+    Float32.(100:20:3900),         # receivers from 100m to 3900m
+    fill(10.0f0, 190);             # all at 10m depth
+    config = SimulationConfig(nt=3000, f0=15.0f0)
+)
 
 # With video
-result = simulate!(model, 1500.0, 50.0, rec_x, rec_z;
+result = simulate!(
+    model, 2000.0f0, 50.0f0, rec_x, rec_z;
     config = SimulationConfig(nt=3000),
-    video_config = VideoConfig(fields=[:vz], skip=5)
+    video_config = VideoConfig(fields=[:vz], skip=5, fps=30)
 )
 ```
+
+See also: [`SimulationConfig`](@ref), [`VideoConfig`](@ref), [`simulate_irregular!`](@ref)
 """
 function simulate!(model::VelocityModel,
     src_x::Real, src_z::Real,
@@ -197,36 +284,73 @@ end
 # ==============================================================================
 
 """
-    simulate_irregular!(model, z_surface, src_x, rec_x; config, video_config=nothing)
+    simulate_irregular!(model, z_surface, src_x, rec_x; config, video_config=nothing) -> SimulationResult
 
-Run simulation with irregular free surface using IBM.
+Run elastic wave simulation with irregular free surface using Immersed Boundary Method (IBM).
+
+The surface shape is defined by `z_surface`, which specifies the depth at each x grid point.
+Source and receiver positions are specified relative to the surface (depth below surface).
 
 # Arguments
-- `model::VelocityModel`: Velocity model
-- `z_surface::Vector{Float32}`: Surface elevation at each x grid point (meters)
-- `src_x`: Source x position in meters
-- `rec_x`: Receiver x positions in meters
-- `config`: IrregularSurfaceConfig
-- `video_config`: VideoConfig for wavefield recording (optional)
+- `model::VelocityModel`: Velocity model containing vp, vs, rho arrays
+- `z_surface::Vector{Float32}`: Surface elevation at each x grid point in meters.
+  Length must equal `model.nx`. Larger values = deeper surface.
+- `src_x::Real`: Source x position in meters
+- `rec_x::Vector{<:Real}`: Receiver x positions in meters
+
+# Keyword Arguments
+- `config::IrregularSurfaceConfig`: Simulation configuration (required).
+  Includes `src_depth` and `rec_depth` for positioning relative to surface.
+- `video_config::Union{VideoConfig, Nothing} = nothing`: Video recording configuration
 
 # Returns
-- `SimulationResult`
+- `SimulationResult`: Contains gather data and paths to output files
+
+# Output Files
+All files are saved to `config.output_dir`:
+- `gather.bin`: Binary file with seismic gather
+- `gather.png`: Plot of seismic gather  
+- `model_setup.png`: Model and geometry visualization (if `plot_model=true`)
+- `surface_elevation.txt`: Surface elevation data
+- `wavefield_<field>.mp4`: Wavefield video (if `video_config` provided)
 
 # Example
 ```julia
-model = VelocityModel(vp, vs, rho, 10.0, 10.0)
-z_surface = sinusoidal_surface(nx, dx; amplitude=30, wavelength=1000)
+using Fomo
 
-# Without video
-result = simulate_irregular!(model, z_surface, 2000.0, rec_x;
-    config = IrregularSurfaceConfig(nt=3000))
+# Create model
+model = VelocityModel(vp, vs, rho, 10.0f0, 10.0f0)
 
-# With video  
-result = simulate_irregular!(model, z_surface, 2000.0, rec_x;
-    config = IrregularSurfaceConfig(nt=3000),
+# Define surface using helper function
+z_surface = sinusoidal_surface(nx, dx; base_depth=50, amplitude=30, wavelength=1000)
+
+# Or combine multiple shapes
+z_surface = combine_surfaces(
+    sinusoidal_surface(nx, dx; amplitude=20),
+    gaussian_valley(nx, dx; valley_depth=25, width=300)
+)
+
+# Or define custom shape
+x = Float32.((0:nx-1) .* dx)
+z_surface = Float32.(50.0 .+ 20.0 .* sin.(2π .* x ./ 1000.0))
+
+# Run simulation
+result = simulate_irregular!(
+    model,
+    z_surface,
+    2000.0f0,                      # source x position
+    Float32.(100:20:3900);         # receiver x positions
+    config = IrregularSurfaceConfig(
+        nt = 3000,
+        ibm_method = :direct_zero,
+        src_depth = 30.0f0,        # 30m below surface
+        rec_depth = 0.0f0          # on surface
+    ),
     video_config = VideoConfig(fields=[:vz], skip=10)
 )
 ```
+
+See also: [`IrregularSurfaceConfig`](@ref), [`sinusoidal_surface`](@ref), [`combine_surfaces`](@ref)
 """
 function simulate_irregular!(model::VelocityModel,
     z_surface::Vector{Float32},
@@ -327,16 +451,50 @@ end
 # ==============================================================================
 
 """
-    flat_surface(nx, dx, depth)
+    flat_surface(nx, dx, depth) -> Vector{Float32}
 
-Create a flat surface at constant depth.
+Create a flat (horizontal) surface at constant depth.
+
+# Arguments
+- `nx::Int`: Number of grid points in x direction
+- `dx::Real`: Grid spacing in meters
+- `depth::Real`: Constant depth of surface in meters
+
+# Returns
+- `Vector{Float32}`: Surface elevation array of length `nx`
+
+# Example
+```julia
+z_surface = flat_surface(400, 10.0, 50.0)  # flat surface at 50m depth
+```
 """
 flat_surface(nx::Int, dx::Real, depth::Real) = fill(Float32(depth), nx)
 
 """
-    sinusoidal_surface(nx, dx; base_depth=50, amplitude=20, wavelength=1000)
+    sinusoidal_surface(nx, dx; base_depth=50, amplitude=20, wavelength=1000) -> Vector{Float32}
 
-Create a sinusoidal surface.
+Create a sinusoidal (wavy) surface.
+
+# Arguments
+- `nx::Int`: Number of grid points in x direction
+- `dx::Real`: Grid spacing in meters
+
+# Keyword Arguments
+- `base_depth::Real = 50.0`: Mean depth of surface in meters
+- `amplitude::Real = 20.0`: Amplitude of sine wave in meters
+- `wavelength::Real = 1000.0`: Wavelength of sine wave in meters
+
+# Returns
+- `Vector{Float32}`: Surface elevation array
+
+# Example
+```julia
+# Gentle undulation
+z_surface = sinusoidal_surface(400, 10.0; amplitude=15, wavelength=2000)
+
+# Sharp ripples
+z_surface = sinusoidal_surface(400, 10.0; amplitude=30, wavelength=500)
+```
 """
 function sinusoidal_surface(nx::Int, dx::Real;
     base_depth::Real=50.0,
@@ -347,9 +505,33 @@ function sinusoidal_surface(nx::Int, dx::Real;
 end
 
 """
-    gaussian_valley(nx, dx; base_depth=50, valley_depth=30, center=nothing, width=200)
+    gaussian_valley(nx, dx; base_depth=50, valley_depth=30, center=nothing, width=200) -> Vector{Float32}
 
-Create a surface with a Gaussian valley (depression).
+Create a surface with a Gaussian valley (depression/canyon).
+
+The valley goes **deeper** into the model (larger z values).
+
+# Arguments
+- `nx::Int`: Number of grid points in x direction
+- `dx::Real`: Grid spacing in meters
+
+# Keyword Arguments
+- `base_depth::Real = 50.0`: Depth of flat regions in meters
+- `valley_depth::Real = 30.0`: Additional depth at valley center in meters
+- `center::Union{Real, Nothing} = nothing`: Valley center x position. If `nothing`, centered in model
+- `width::Real = 200.0`: Gaussian standard deviation (controls valley width) in meters
+
+# Returns
+- `Vector{Float32}`: Surface elevation array
+
+# Example
+```julia
+# Centered valley
+z_surface = gaussian_valley(400, 10.0; valley_depth=40, width=300)
+
+# Off-center valley
+z_surface = gaussian_valley(400, 10.0; valley_depth=40, center=1000.0, width=200)
+```
 """
 function gaussian_valley(nx::Int, dx::Real;
     base_depth::Real=50.0,
@@ -362,9 +544,29 @@ function gaussian_valley(nx::Int, dx::Real;
 end
 
 """
-    gaussian_hill(nx, dx; base_depth=80, hill_height=30, center=nothing, width=200)
+    gaussian_hill(nx, dx; base_depth=80, hill_height=30, center=nothing, width=200) -> Vector{Float32}
 
 Create a surface with a Gaussian hill (elevation).
+
+The hill rises **up** from the base (smaller z values at peak).
+
+# Arguments
+- `nx::Int`: Number of grid points in x direction
+- `dx::Real`: Grid spacing in meters
+
+# Keyword Arguments
+- `base_depth::Real = 80.0`: Depth of flat regions in meters
+- `hill_height::Real = 30.0`: Height of hill above base in meters
+- `center::Union{Real, Nothing} = nothing`: Hill center x position. If `nothing`, centered in model
+- `width::Real = 200.0`: Gaussian standard deviation (controls hill width) in meters
+
+# Returns
+- `Vector{Float32}`: Surface elevation array
+
+# Example
+```julia
+z_surface = gaussian_hill(400, 10.0; base_depth=100, hill_height=50, width=400)
+```
 """
 function gaussian_hill(nx::Int, dx::Real;
     base_depth::Real=80.0,
@@ -377,9 +579,29 @@ function gaussian_hill(nx::Int, dx::Real;
 end
 
 """
-    tilted_surface(nx, dx; depth_left=30, depth_right=70)
+    tilted_surface(nx, dx; depth_left=30, depth_right=70) -> Vector{Float32}
 
-Create a linearly tilted surface.
+Create a linearly tilted (sloped) surface.
+
+# Arguments
+- `nx::Int`: Number of grid points in x direction
+- `dx::Real`: Grid spacing in meters
+
+# Keyword Arguments
+- `depth_left::Real = 30.0`: Depth at left edge (x=0) in meters
+- `depth_right::Real = 70.0`: Depth at right edge in meters
+
+# Returns
+- `Vector{Float32}`: Surface elevation array
+
+# Example
+```julia
+# Dipping surface (deeper on right)
+z_surface = tilted_surface(400, 10.0; depth_left=20, depth_right=80)
+
+# Reverse dip
+z_surface = tilted_surface(400, 10.0; depth_left=80, depth_right=20)
+```
 """
 function tilted_surface(nx::Int, dx::Real;
     depth_left::Real=30.0,
@@ -388,9 +610,33 @@ function tilted_surface(nx::Int, dx::Real;
 end
 
 """
-    step_surface(nx, dx; depth_left=30, depth_right=70, step_position=nothing)
+    step_surface(nx, dx; depth_left=30, depth_right=70, step_position=nothing) -> Vector{Float32}
 
-Create a surface with a step (cliff).
+Create a surface with a sharp step (cliff/escarpment/fault scarp).
+
+# Arguments
+- `nx::Int`: Number of grid points in x direction
+- `dx::Real`: Grid spacing in meters
+
+# Keyword Arguments
+- `depth_left::Real = 30.0`: Depth on left side of step in meters
+- `depth_right::Real = 70.0`: Depth on right side of step in meters
+- `step_position::Union{Real, Nothing} = nothing`: X position of step. If `nothing`, at center
+
+# Returns
+- `Vector{Float32}`: Surface elevation array
+
+# Example
+```julia
+# Step down (cliff)
+z_surface = step_surface(400, 10.0; depth_left=30, depth_right=60)
+
+# Step up (escarpment)
+z_surface = step_surface(400, 10.0; depth_left=60, depth_right=30)
+
+# Off-center step
+z_surface = step_surface(400, 10.0; depth_left=30, depth_right=60, step_position=1500.0)
+```
 """
 function step_surface(nx::Int, dx::Real;
     depth_left::Real=30.0,
@@ -404,9 +650,35 @@ function step_surface(nx::Int, dx::Real;
 end
 
 """
-    random_surface(nx, dx; base_depth=50, amplitude=10, smoothness=5)
+    random_surface(nx, dx; base_depth=50, amplitude=10, smoothness=5) -> Vector{Float32}
 
-Create a random rough surface.
+Create a random rough surface with controllable smoothness.
+
+Uses Gaussian random noise with moving average smoothing.
+
+# Arguments
+- `nx::Int`: Number of grid points in x direction
+- `dx::Real`: Grid spacing in meters
+
+# Keyword Arguments
+- `base_depth::Real = 50.0`: Mean depth of surface in meters
+- `amplitude::Real = 10.0`: Standard deviation of random roughness in meters
+- `smoothness::Int = 5`: Smoothing window half-width in grid points. Larger = smoother
+
+# Returns
+- `Vector{Float32}`: Surface elevation array
+
+# Example
+```julia
+# Rough surface
+z_surface = random_surface(400, 10.0; amplitude=20, smoothness=3)
+
+# Gentle rolling terrain
+z_surface = random_surface(400, 10.0; amplitude=15, smoothness=15)
+```
+
+# Note
+Results are random and will differ each time. Use `Random.seed!()` for reproducibility.
 """
 function random_surface(nx::Int, dx::Real;
     base_depth::Real=50.0,
@@ -423,9 +695,40 @@ function random_surface(nx::Int, dx::Real;
 end
 
 """
-    combine_surfaces(surfaces...; method=:add)
+    combine_surfaces(surfaces...; method=:add) -> Vector{Float32}
 
-Combine multiple surface perturbations. Methods: :add, :min, :max
+Combine multiple surface shapes into one.
+
+# Arguments
+- `surfaces...`: Two or more surface arrays (all must have same length)
+
+# Keyword Arguments
+- `method::Symbol = :add`: How to combine surfaces
+  - `:add` - Add all surfaces element-wise (useful for superimposing perturbations)
+  - `:min` - Take minimum depth at each point (highest elevation)
+  - `:max` - Take maximum depth at each point (lowest elevation)
+
+# Returns
+- `Vector{Float32}`: Combined surface elevation array
+
+# Example
+```julia
+# Sinusoidal base + valley
+z_surface = combine_surfaces(
+    sinusoidal_surface(400, 10.0; base_depth=50, amplitude=15),
+    gaussian_valley(400, 10.0; base_depth=0, valley_depth=25)  # Note: base_depth=0 for perturbation
+)
+
+# Complex terrain
+z_surface = combine_surfaces(
+    flat_surface(400, 10.0, 60.0),
+    sinusoidal_surface(400, 10.0; base_depth=0, amplitude=10, wavelength=500),
+    gaussian_valley(400, 10.0; base_depth=0, valley_depth=20, center=1500.0)
+)
+```
+
+# Tip
+When combining, set `base_depth=0` for perturbation shapes so they add properly to the base.
 """
 function combine_surfaces(surfaces...; method::Symbol=:add)
     nx = length(surfaces[1])

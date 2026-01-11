@@ -12,15 +12,50 @@ using Printf
 using CairoMakie: Figure, Axis, heatmap!, Colorbar, DataAspect, Observable, record
 
 """
-    VideoConfig
+    VideoConfig(; fields, skip, downsample, colormap, fps)
 
-Video recording configuration.
+Configuration for wavefield video recording.
 
-# Fields
-- `fields`: Fields to record (:p, :vx, :vz, :vel, :txx, :tzz, :txz)
-- `skip`: Record every N steps
-- `downsample`: Spatial downsampling factor
-- `colormap`: Default colormap
+# Keyword Arguments
+- `fields::Vector{Symbol} = [:vz]`: Wavefield components to record. Options:
+  - `:vx` - Horizontal velocity component
+  - `:vz` - Vertical velocity component (recommended for surface waves)
+  - `:vel` - Velocity magnitude √(vx² + vz²)
+  - `:p` - Pressure field -(τxx + τzz)/2
+  - `:txx` - Normal stress τxx
+  - `:tzz` - Normal stress τzz
+  - `:txz` - Shear stress τxz
+- `skip::Int = 10`: Record every N time steps. Larger = smaller file, fewer frames
+- `downsample::Int = 1`: Spatial downsampling factor. 2 = half resolution
+- `colormap::Symbol = :seismic`: Color scheme for visualization. Options:
+  - `:seismic` - Red-white-blue, good for signed fields (vx, vz, p)
+  - `:inferno` - Yellow-red-black, good for magnitude fields (:vel)
+  - `:viridis` - Green-blue-yellow
+  - Any valid CairoMakie/Makie colormap
+- `fps::Int = 30`: Video frame rate (frames per second)
+
+# Example
+```julia
+# Record vz component, every 5 steps, 30 fps
+video_config = VideoConfig(fields=[:vz], skip=5, fps=30)
+
+# Record multiple fields
+video_config = VideoConfig(fields=[:vz, :vx], skip=10)
+
+# Record velocity magnitude with inferno colormap
+video_config = VideoConfig(fields=[:vel], skip=5, colormap=:inferno)
+
+# High-quality video (more frames)
+video_config = VideoConfig(fields=[:vz], skip=2, fps=60)
+```
+
+# Notes
+- Total frames = nt ÷ skip
+- Video duration = (nt ÷ skip) / fps seconds
+- Larger `skip` reduces file size but may miss fast wave propagation
+- `:vel` uses asymmetric colormap (0 to max) since magnitude is non-negative
+
+See also: [`simulate!`](@ref), [`simulate_irregular!`](@ref)
 """
 struct VideoConfig
     fields::Vector{Symbol}
