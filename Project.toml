@@ -1,7 +1,7 @@
 name = "Fomo"
 uuid = "12345678-1234-1234-1234-123456789abc"
-authors = ["Your Name"]
-version = "0.2.0"
+authors = ["Wu Heng <imwuheng@gmail.com>"]
+version = "0.3.0"
 
 [deps]
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
