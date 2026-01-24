@@ -5,8 +5,6 @@
 # Optimized for running many shots with minimal overhead
 # ==============================================================================
 
-export BatchSimulator, simulate_shot!, simulate_shots!, benchmark_shots
-
 # ==============================================================================
 # BatchSimulator - Pre-initialized simulator for maximum performance
 # ==============================================================================
@@ -94,22 +92,21 @@ function BatchSimulator(
     # Compute dt if not specified
     vp_max = maximum(model.vp)
     dt = if config.dt === nothing
-        min_spacing = min(model.dx, model.dz)
-        Float32(config.cfl * min_spacing / (vp_max * sqrt(2.0f0)))
+        Float32(config.cfl * min(model.dx, model.dz) / vp_max)
     else
         config.dt
     end
 
-    params = SimParams(dt, config.nt)
+    # Create SimParams with correct signature: (dt, nt, dx, dz, fd_order)
+    params = SimParams(dt, config.nt, model.dx, model.dz, config.fd_order)
 
     # Initialize medium (ONCE)
     medium = init_medium(model, config.nbc, config.fd_order, be;
         free_surface=config.free_surface)
 
     # Initialize HABC (ONCE)
-    avg_vp = sum(model.vp) / length(model.vp)
-    habc = init_habc(medium.nx, medium.nz, config.nbc, dt,
-        model.dx, model.dz, avg_vp, be)
+    habc = init_habc(medium.nx, medium.nz, config.nbc, medium.pad, dt,
+        model.dx, model.dz, vp_max, be)
 
     # FD coefficients (ONCE)
     fd_coeffs = to_device(get_fd_coefficients(config.fd_order), be)
@@ -118,8 +115,15 @@ function BatchSimulator(
     wavefield = Wavefield(medium.nx, medium.nz, be)
 
     # Receivers (ONCE) - data buffer will be reused
-    rec_template = setup_receivers(Float32.(rec_x), Float32.(rec_z), medium)
-    receivers = _create_receivers_for_batch(be, rec_template, config.nt)
+    n_rec = length(rec_x)
+    rec_i = [round(Int, x / model.dx) + medium.pad + 1 for x in rec_x]
+    rec_j = [round(Int, z / model.dz) + medium.pad + 1 for z in rec_z]
+    receivers = Receivers(
+        to_device(rec_i, be),
+        to_device(rec_j, be),
+        to_device(zeros(Float32, config.nt, n_rec), be),
+        :vz
+    )
 
     # Pre-generate and cache wavelet on device
     wavelet = ricker_wavelet(config.f0, dt, config.nt)
@@ -129,21 +133,6 @@ function BatchSimulator(
         be, medium, habc, fd_coeffs, wavefield, receivers,
         wavelet_device, params, config.f0, model.dx, model.dz, medium.pad, true
     )
-end
-
-# Helper to create receivers for batch processing
-function _create_receivers_for_batch(::CPUBackend, template::Receivers, nt::Int)
-    data = zeros(Float32, nt, length(template.i))
-    return Receivers(copy(template.i), copy(template.j), data, template.type)
-end
-
-function _create_receivers_for_batch(::CUDABackend, template::Receivers, nt::Int)
-    i_cpu = template.i isa Array ? template.i : Array(template.i)
-    j_cpu = template.j isa Array ? template.j : Array(template.j)
-    i_gpu = CuArray(Int32.(i_cpu))
-    j_gpu = CuArray(Int32.(j_cpu))
-    data = CUDA.zeros(Float32, nt, length(i_gpu))
-    return Receivers(i_gpu, j_gpu, data, template.type)
 end
 
 # ==============================================================================
@@ -188,8 +177,8 @@ function simulate_shot!(sim::BatchSimulator, src_x::Real, src_z::Real;
     end
 
     # Create source (lightweight operation)
-    src_i = round(Int32, src_x / sim.dx) + sim.pad + 1
-    src_j = round(Int32, src_z / sim.dz) + sim.pad + 1
+    src_i = round(Int, src_x / sim.dx) + sim.pad + 1
+    src_j = round(Int, src_z / sim.dz) + sim.pad + 1
     source = Source(src_i, src_j, wavelet_dev)
 
     # Reset wavefield (in-place, fast)
@@ -268,8 +257,8 @@ function simulate_shots!(sim::BatchSimulator,
 
     for i in 1:n_shots
         # Create source
-        src_i = round(Int32, src_x[i] / sim.dx) + sim.pad + 1
-        src_j = round(Int32, src_z[i] / sim.dz) + sim.pad + 1
+        src_i = round(Int, src_x[i] / sim.dx) + sim.pad + 1
+        src_j = round(Int, src_z[i] / sim.dz) + sim.pad + 1
         source = Source(src_i, src_j, wavelet_dev)
 
         # Reset wavefield
