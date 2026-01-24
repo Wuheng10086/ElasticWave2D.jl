@@ -25,6 +25,7 @@
 # │   ├── time_stepper.jl     # Time stepping (regular)
 # │   ├── time_stepper_ibm.jl # Time stepping (irregular surface)
 # │   ├── shots.jl            # Shot management
+# │   ├── batch.jl            # High-performance batch simulation
 # │   └── parallel.jl         # Multi-GPU parallel execution
 # ├── io/                     # Input/Output
 # │   ├── model_io.jl         # Model load/save
@@ -107,13 +108,16 @@ export inject_source!, record_receivers!, reset!
 export TimeStepInfo
 export time_step!, run_time_loop!
 export time_step_irregular!, run_time_loop_irregular!
-export run_shot!, run_shots!
+export run_shot!, run_shots!, run_shots_fast!
 export run_shot_irregular!, run_shots_irregular!
 export run_shots_auto_irregular!
 
 # --- High-level API ---
 export SimulationConfig, SimulationResult, simulate!
 export IrregularSurfaceConfig, simulate_irregular!
+
+# --- Batch Simulation (High Performance) ---
+export BatchSimulator, simulate_shot!, simulate_shots!, benchmark_shots
 
 # --- Surface shape helpers ---
 export flat_surface, sinusoidal_surface, gaussian_valley, gaussian_hill
@@ -167,7 +171,8 @@ include("simulation/time_stepper.jl")      # Defines run_time_loop!
 include("simulation/shots.jl")             # Uses run_time_loop!, defines MultiShotConfig
 include("simulation/time_stepper_ibm.jl")  # Uses MultiShotConfig
 include("simulation/parallel.jl")
-include("simulation/api.jl")               # High-level API (uses VideoConfig)
+include("simulation/api.jl")               # High-level API (defines SimulationConfig)
+include("simulation/batch.jl")             # High-performance batch (uses SimulationConfig)
 
 # 7. IO (file operations)
 include("io/model_io.jl")

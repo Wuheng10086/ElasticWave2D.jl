@@ -35,24 +35,24 @@ gathers = simulate_shots!(simulator, src_x_vec, src_z_vec)
 mutable struct BatchSimulator
     # Backend
     backend::AbstractBackend
-    
+
     # Pre-initialized structures (allocated once, reused)
     medium::Medium
     habc::HABCConfig
     fd_coeffs::Any  # CuArray or Array
     wavefield::Wavefield
     receivers::Receivers
-    
+
     # Cached wavelet on device
     wavelet_device::Any
-    
+
     # Parameters
     params::SimParams
     f0::Float32
     dx::Float32
     dz::Float32
     pad::Int
-    
+
     # State
     is_initialized::Bool
 end
@@ -88,8 +88,8 @@ function BatchSimulator(
     model::VelocityModel,
     rec_x::Vector{<:Real},
     rec_z::Vector{<:Real};
-    config::SimulationConfig = SimulationConfig(),
-    be::AbstractBackend = is_cuda_available() ? backend(:cuda) : backend(:cpu)
+    config::SimulationConfig=SimulationConfig(),
+    be::AbstractBackend=is_cuda_available() ? backend(:cuda) : backend(:cpu)
 )
     # Compute dt if not specified
     vp_max = maximum(model.vp)
@@ -99,32 +99,32 @@ function BatchSimulator(
     else
         config.dt
     end
-    
+
     params = SimParams(dt, config.nt)
-    
+
     # Initialize medium (ONCE)
     medium = init_medium(model, config.nbc, config.fd_order, be;
-                        free_surface=config.free_surface)
-    
+        free_surface=config.free_surface)
+
     # Initialize HABC (ONCE)
     avg_vp = sum(model.vp) / length(model.vp)
     habc = init_habc(medium.nx, medium.nz, config.nbc, dt,
-                    model.dx, model.dz, avg_vp, be)
-    
+        model.dx, model.dz, avg_vp, be)
+
     # FD coefficients (ONCE)
     fd_coeffs = to_device(get_fd_coefficients(config.fd_order), be)
-    
+
     # Wavefield (ONCE)
     wavefield = Wavefield(medium.nx, medium.nz, be)
-    
+
     # Receivers (ONCE) - data buffer will be reused
     rec_template = setup_receivers(Float32.(rec_x), Float32.(rec_z), medium)
     receivers = _create_receivers_for_batch(be, rec_template, config.nt)
-    
+
     # Pre-generate and cache wavelet on device
-    wavelet = ricker_wavelet(config.nt, dt, config.f0)
+    wavelet = ricker_wavelet(config.f0, dt, config.nt)
     wavelet_device = to_device(wavelet, be)
-    
+
     return BatchSimulator(
         be, medium, habc, fd_coeffs, wavefield, receivers,
         wavelet_device, params, config.f0, model.dx, model.dz, medium.pad, true
@@ -176,33 +176,33 @@ gather = simulate_shot!(sim, 5000.0f0, 10.0f0)
 ```
 """
 function simulate_shot!(sim::BatchSimulator, src_x::Real, src_z::Real;
-                        wavelet::Union{Vector{Float32}, Nothing}=nothing)
-    
+    wavelet::Union{Vector{Float32},Nothing}=nothing)
+
     @assert sim.is_initialized "Simulator not initialized"
-    
+
     # Use custom wavelet or cached one
     wavelet_dev = if wavelet === nothing
         sim.wavelet_device
     else
         to_device(wavelet, sim.backend)
     end
-    
+
     # Create source (lightweight operation)
     src_i = round(Int32, src_x / sim.dx) + sim.pad + 1
     src_j = round(Int32, src_z / sim.dz) + sim.pad + 1
     source = Source(src_i, src_j, wavelet_dev)
-    
+
     # Reset wavefield (in-place, fast)
     reset!(sim.backend, sim.wavefield)
-    
+
     # Clear receiver data (in-place, fast)
     fill!(sim.receivers.data, 0.0f0)
-    
+
     # Run time loop (no progress bar for speed)
     run_time_loop!(sim.backend, sim.wavefield, sim.medium, sim.habc,
-                   sim.fd_coeffs, source, sim.receivers, sim.params;
-                   progress=false, on_step=nothing)
-    
+        sim.fd_coeffs, source, sim.receivers, sim.params;
+        progress=false, on_step=nothing)
+
     # Return gather (copy to CPU)
     return _get_gather_from_batch(sim.backend, sim.receivers)
 end
@@ -246,63 +246,63 @@ gathers = simulate_shots!(sim, src_x, src_z; verbose=true)
 ```
 """
 function simulate_shots!(sim::BatchSimulator,
-                         src_x::Vector{<:Real},
-                         src_z::Vector{<:Real};
-                         wavelet::Union{Vector{Float32}, Nothing}=nothing,
-                         verbose::Bool=false,
-                         on_shot_complete::Union{Function, Nothing}=nothing)
-    
+    src_x::Vector{<:Real},
+    src_z::Vector{<:Real};
+    wavelet::Union{Vector{Float32},Nothing}=nothing,
+    verbose::Bool=false,
+    on_shot_complete::Union{Function,Nothing}=nothing)
+
     n_shots = length(src_x)
     @assert length(src_z) == n_shots "src_x and src_z must have same length"
-    
+
     gathers = Vector{Matrix{Float32}}(undef, n_shots)
-    
+
     # Use custom wavelet or cached one
     wavelet_dev = if wavelet === nothing
         sim.wavelet_device
     else
         to_device(wavelet, sim.backend)
     end
-    
+
     t_start = time()
-    
+
     for i in 1:n_shots
         # Create source
         src_i = round(Int32, src_x[i] / sim.dx) + sim.pad + 1
         src_j = round(Int32, src_z[i] / sim.dz) + sim.pad + 1
         source = Source(src_i, src_j, wavelet_dev)
-        
+
         # Reset wavefield
         reset!(sim.backend, sim.wavefield)
-        
+
         # Clear receiver data
         fill!(sim.receivers.data, 0.0f0)
-        
+
         # Run time loop
         run_time_loop!(sim.backend, sim.wavefield, sim.medium, sim.habc,
-                       sim.fd_coeffs, source, sim.receivers, sim.params;
-                       progress=false, on_step=nothing)
-        
+            sim.fd_coeffs, source, sim.receivers, sim.params;
+            progress=false, on_step=nothing)
+
         # Copy gather
         gathers[i] = _get_gather_from_batch(sim.backend, sim.receivers)
-        
+
         # Callback
         if on_shot_complete !== nothing
             on_shot_complete(gathers[i], i)
         end
-        
+
         # Progress (minimal overhead - every 10%)
         if verbose && (i % max(1, n_shots ÷ 10) == 0 || i == n_shots)
             elapsed = time() - t_start
-            @info "Progress" completed="$i/$n_shots" time_per_shot="$(round(elapsed/i, digits=3))s"
+            @info "Progress" completed = "$i/$n_shots" time_per_shot = "$(round(elapsed/i, digits=3))s"
         end
     end
-    
+
     if verbose
         total = time() - t_start
-        @info "Completed" n_shots=n_shots total_time="$(round(total, digits=2))s" per_shot="$(round(total/n_shots, digits=3))s"
+        @info "Completed" n_shots = n_shots total_time = "$(round(total, digits=2))s" per_shot = "$(round(total/n_shots, digits=3))s"
     end
-    
+
     return gathers
 end
 
@@ -339,29 +339,29 @@ function benchmark_shots(
     rec_z::Vector{<:Real},
     src_x::Vector{<:Real},
     src_z::Vector{<:Real};
-    config::SimulationConfig = SimulationConfig(),
-    be::AbstractBackend = is_cuda_available() ? backend(:cuda) : backend(:cpu),
-    n_warmup::Int = 2
+    config::SimulationConfig=SimulationConfig(),
+    be::AbstractBackend=is_cuda_available() ? backend(:cuda) : backend(:cpu),
+    n_warmup::Int=2
 )
-    println("=" ^ 60)
+    println("="^60)
     println("  Fomo.jl Shot Benchmark")
-    println("=" ^ 60)
+    println("="^60)
     println()
-    
+
     n_shots = length(src_x)
-    
+
     # Initialize
     println("Initializing BatchSimulator...")
     t_init = time()
     sim = BatchSimulator(model, rec_x, rec_z; config=config, be=be)
-    
+
     # Synchronize if CUDA
     if sim.backend isa CUDABackend
         CUDA.synchronize()
     end
     t_init = time() - t_init
     println("  Initialization: $(round(t_init, digits=3))s")
-    
+
     # Warmup
     println("\nWarmup ($n_warmup shots)...")
     for i in 1:min(n_warmup, n_shots)
@@ -371,39 +371,39 @@ function benchmark_shots(
         CUDA.synchronize()
     end
     println("  Warmup complete")
-    
+
     # Benchmark
     println("\nBenchmarking $n_shots shots...")
-    
+
     if sim.backend isa CUDABackend
         CUDA.synchronize()
     end
-    
+
     t_start = time()
     gathers = simulate_shots!(sim, Float32.(src_x), Float32.(src_z); verbose=false)
-    
+
     if sim.backend isa CUDABackend
         CUDA.synchronize()
     end
-    
+
     total_time = time() - t_start
     time_per_shot = total_time / n_shots
-    
-    println("\n" * "=" ^ 60)
+
+    println("\n" * "="^60)
     println("  Results")
-    println("=" ^ 60)
+    println("="^60)
     println("  Backend:        $(typeof(sim.backend))")
     println("  Total shots:    $n_shots")
     println("  Total time:     $(round(total_time, digits=3))s")
     println("  Time per shot:  $(round(time_per_shot, digits=3))s")
     println("  Throughput:     $(round(1/time_per_shot, digits=2)) shots/s")
-    println("=" ^ 60)
-    
+    println("="^60)
+
     return (
-        time_per_shot = time_per_shot,
-        total_time = total_time,
-        n_shots = n_shots,
-        init_time = t_init,
-        gathers = gathers
+        time_per_shot=time_per_shot,
+        total_time=total_time,
+        n_shots=n_shots,
+        init_time=t_init,
+        gathers=gathers
     )
 end
