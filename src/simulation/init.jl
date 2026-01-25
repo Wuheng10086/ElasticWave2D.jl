@@ -109,6 +109,58 @@ function init_medium(vp::Matrix, vs::Matrix, rho::Matrix,
 end
 
 """
+    init_medium_vacuum(vp, vs, rho, dx, dz, nbc, fd_order, backend; surface_elevation=nothing)
+
+Initialize Medium with vacuum boundary condition for irregular surfaces.
+"""
+function init_medium_vacuum(vp::Matrix, vs::Matrix, rho::Matrix,
+    dx::Real, dz::Real, nbc::Int, fd_order::Int,
+    backend::AbstractBackend; surface_elevation=nothing)
+
+    M = fd_order ÷ 2
+    pad = nbc + M
+
+    # Input data is [nz, nx] (seismic convention)
+    # Transpose to [nx, nz] for simulation (better cache performance)
+    vp_t = permutedims(vp)
+    vs_t = permutedims(vs)
+    rho_t = permutedims(rho)
+
+    nx_inner, nz_inner = size(vp_t)
+    nx = nx_inner + 2 * pad
+    nz = nz_inner + 2 * pad
+
+    x_max = Float32((nx_inner - 1) * dx)
+    z_max = Float32((nz_inner - 1) * dz)
+
+    # Pad and compute staggered parameters
+    vp_pad = _pad_array(vp_t, pad)
+    vs_pad = _pad_array(vs_t, pad)
+    rho_pad = _pad_array(rho_t, pad)
+
+    # Apply vacuum formulation if surface elevation is provided
+    if surface_elevation !== nothing
+        # Apply vacuum mask to set material parameters to 0 above surface
+        surface_j = setup_vacuum_formulation!(vp_pad, vs_pad, rho_pad, surface_elevation, dz, pad)
+    end
+
+    # Compute all material properties including precomputed values using vacuum formulation
+    lam, mu_txx, mu_txz, buoy_vx, buoy_vz, lam_2mu = compute_staggered_params_vacuum(vp_pad, vs_pad, rho_pad)
+
+    # Move to device
+    return Medium(
+        nx, nz, Float32(dx), Float32(dz), x_max, z_max,
+        M, pad, true,  # is_free_surface is true for vacuum case
+        to_device(lam, backend),
+        to_device(mu_txx, backend),
+        to_device(mu_txz, backend),
+        to_device(buoy_vx, backend),
+        to_device(buoy_vz, backend),
+        to_device(lam_2mu, backend)
+    )
+end
+
+"""
     init_medium(model::VelocityModel, nbc, fd_order, backend; free_surface=true)
 
 Initialize Medium from a VelocityModel struct (loaded via load_model).
@@ -161,27 +213,74 @@ function _compute_staggered_params_optimized(vp, vs, rho)
 
     # OPTIMIZED: Precompute buoyancy (1/rho) instead of storing rho
     # This eliminates division in the velocity update kernel!
-    buoy_vx = Float32.(1.0f0 ./ rho)
+    # SAFETY: Explicitly handle vacuum (rho=0) to avoid Inf/NaN
 
-    # Staggered buoyancy for vz (average then invert)
+    # 1. Effective buoyancy for vx: b_x at (i+1/2, j)
+    # Use horizontal 2-point arithmetic average of rho at (i,j) and (i+1,j)
+    buoy_vx = zeros(Float32, nx, nz)
+    @inbounds for j in 1:nz
+        for i in 1:nx-1
+            rho1 = rho[i, j]
+            rho2 = rho[i+1, j]
+
+            if rho1 == 0.0f0 && rho2 == 0.0f0
+                buoy_vx[i, j] = 0.0f0
+            elseif rho1 == 0.0f0
+                buoy_vx[i, j] = 2.0f0 / rho2
+            elseif rho2 == 0.0f0
+                buoy_vx[i, j] = 2.0f0 / rho1
+            else
+                buoy_vx[i, j] = 2.0f0 / (rho1 + rho2)
+            end
+        end
+    end
+    buoy_vx[nx, :] .= buoy_vx[nx-1, :]
+
+    # 2. Effective buoyancy for vz: b_z at (i, j+1/2)
+    # Use vertical 2-point arithmetic average of rho at (i,j) and (i,j+1)
+    # SAFETY: Handle vacuum cases correctly
     buoy_vz = zeros(Float32, nx, nz)
     @inbounds for j in 1:nz-1
-        for i in 1:nx-1
-            # Average rho at staggered position, then invert
-            rho_avg = 0.25f0 * (rho[i, j] + rho[i+1, j] + rho[i, j+1] + rho[i+1, j+1])
-            buoy_vz[i, j] = 1.0f0 / rho_avg
+        for i in 1:nx
+            rho1 = rho[i, j]
+            rho2 = rho[i, j+1]
+
+            if rho1 == 0.0f0 && rho2 == 0.0f0
+                buoy_vz[i, j] = 0.0f0
+            elseif rho1 == 0.0f0
+                buoy_vz[i, j] = 2.0f0 / rho2
+            elseif rho2 == 0.0f0
+                buoy_vz[i, j] = 2.0f0 / rho1
+            else
+                buoy_vz[i, j] = 2.0f0 / (rho1 + rho2)
+            end
         end
     end
-    buoy_vz[nx, :] .= buoy_vz[nx-1, :]
     buoy_vz[:, nz] .= buoy_vz[:, nz-1]
 
-    # Harmonic average for mu at txz positions
+    # 3. Harmonic average for mu at txz positions (i+1/2, j+1/2)
+    # Use 4-point harmonic average of mu
+    # SAFETY: If any mu in the stencil is 0, the effective mu must be 0
+    # to enforce stress-free condition at vacuum interface
     mu_txz = zeros(Float32, nx, nz)
     @inbounds for j in 1:nz-1
-        for i in 1:nx
-            mu_txz[i, j] = 2.0f0 / (1.0f0 / mu[i, j] + 1.0f0 / mu[i, j+1])
+        for i in 1:nx-1
+            m1 = mu[i, j]
+            m2 = mu[i+1, j]
+            m3 = mu[i, j+1]
+            m4 = mu[i+1, j+1]
+
+            # The key vacuum condition: if ANY neighbor is vacuum (mu=0), 
+            # shear stress txz must be 0 at the interface.
+            if m1 == 0.0f0 || m2 == 0.0f0 || m3 == 0.0f0 || m4 == 0.0f0
+                mu_txz[i, j] = 0.0f0
+            else
+                # 4-point harmonic average
+                mu_txz[i, j] = 4.0f0 / (1.0f0 / m1 + 1.0f0 / m2 + 1.0f0 / m3 + 1.0f0 / m4)
+            end
         end
     end
+    mu_txz[nx, :] .= mu_txz[nx-1, :]
     mu_txz[:, nz] .= mu_txz[:, nz-1]
 
     return lam, mu, mu_txz, buoy_vx, buoy_vz, lam_2mu

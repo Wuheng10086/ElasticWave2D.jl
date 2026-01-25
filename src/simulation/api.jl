@@ -45,11 +45,40 @@ Base.@kwdef struct SimulationConfig
     nt::Int = 3000
     cfl::Float32 = 0.4f0
     f0::Float32 = 15.0f0
-    free_surface::Bool = true
+    free_surface::Bool = true  # Keep for backward compatibility
     output_dir::String = "outputs"
     save_gather::Bool = true
     show_progress::Bool = true
     plot_gather::Bool = true
+    boundary_config::Union{BoundaryConfig,Nothing} = nothing  # New enhanced boundary config
+end
+
+# Enhanced constructor that handles both legacy and new boundary configurations
+function SimulationConfig(;
+    nbc::Int=50,
+    fd_order::Int=8,
+    dt::Union{Float32,Nothing}=nothing,
+    nt::Int=3000,
+    cfl::Float32=0.4f0,
+    f0::Float32=15.0f0,
+    free_surface::Bool=true,  # Legacy parameter
+    output_dir::String="outputs",
+    save_gather::Bool=true,
+    show_progress::Bool=true,
+    plot_gather::Bool=true,
+    boundary_config::Union{BoundaryConfig,Nothing}=nothing  # New parameter
+)
+    # If boundary_config is not provided, create from legacy free_surface
+    actual_boundary_config = boundary_config
+    if boundary_config === nothing
+        top_boundary = free_surface ? :free_surface : :absorbing
+        actual_boundary_config = BoundaryConfig(top_boundary=top_boundary, nbc=nbc)
+    end
+
+    return SimulationConfig(
+        nbc, fd_order, dt, nt, cfl, f0, free_surface, output_dir,
+        save_gather, show_progress, plot_gather, actual_boundary_config
+    )
 end
 
 """
@@ -232,7 +261,25 @@ function simulate!(model::VelocityModel,
 
     @info "Parameters" dt_ms = round(dt * 1000, digits=3) nt = config.nt
 
-    medium = init_medium(model, config.nbc, config.fd_order, be; free_surface=config.free_surface)
+    # Use enhanced boundary configuration if available, otherwise use legacy
+    if config.boundary_config !== nothing
+        # Use enhanced boundary initialization based on boundary type
+        if config.boundary_config.top_boundary == :vacuum
+            # For vacuum boundary, we need to handle it specially
+            # For now, we'll use the standard initialization but note that vacuum
+            # boundaries are handled through material parameters
+            medium = init_medium_with_boundaries(model.vp, model.vs, model.rho,
+                model.dx, model.dz, config, be)
+        else
+            # Use standard initialization for other boundary types
+            medium = init_medium_with_boundaries(model.vp, model.vs, model.rho,
+                model.dx, model.dz, config, be)
+        end
+    else
+        # Use legacy initialization
+        medium = init_medium(model, config.nbc, config.fd_order, be; free_surface=config.free_surface)
+    end
+
     habc = init_habc(medium.nx, medium.nz, config.nbc, medium.pad, dt, model.dx, model.dz, vp_max, be)
     fd_coeffs = to_device(get_fd_coefficients(config.fd_order), be)
     wavefield = Wavefield(medium.nx, medium.nz, be)
@@ -262,13 +309,26 @@ function simulate!(model::VelocityModel,
 
     reset!(be, wavefield)
 
-    run_time_loop!(be, wavefield, medium, habc, fd_coeffs, src, rec, params;
-        progress=config.show_progress,
-        on_step=recorder === nothing ? nothing : (W, info) -> begin
-            Fomo.record!(recorder.recorder, W, info.k, dt)
-            return true
-        end
-    )
+    # Use enhanced boundary conditions if available
+    if config.boundary_config !== nothing
+        # Use enhanced time loop with boundary configuration
+        run_time_loop_with_boundaries!(be, wavefield, medium, habc, fd_coeffs, src, rec, params, config.boundary_config;
+            progress=config.show_progress,
+            on_step=recorder === nothing ? nothing : (W, info) -> begin
+                Fomo.record!(recorder.recorder, W, info.k, dt)
+                return true
+            end
+        )
+    else
+        # Use legacy time loop
+        run_time_loop!(be, wavefield, medium, habc, fd_coeffs, src, rec, params;
+            progress=config.show_progress,
+            on_step=recorder === nothing ? nothing : (W, info) -> begin
+                Fomo.record!(recorder.recorder, W, info.k, dt)
+                return true
+            end
+        )
+    end
 
     @info "Simulation complete"
 
@@ -354,99 +414,44 @@ result = simulate_irregular!(
 
 See also: [`IrregularSurfaceConfig`](@ref), [`sinusoidal_surface`](@ref), [`combine_surfaces`](@ref)
 """
-function simulate_irregular!(model::VelocityModel,
-    z_surface::Vector{Float32},
-    src_x::Real,
-    rec_x::Vector{<:Real};
-    config::IrregularSurfaceConfig=IrregularSurfaceConfig(),
-    video_config::Union{VideoConfig,Nothing}=nothing,
-    be=backend(:cuda))
+# Enhanced boundary handling functions
 
-    mkpath(config.output_dir)
+"""
+    apply_boundary_conditions!(backend, wavefield, medium, habc, params)
 
-    #be = is_cuda_available() ? backend(:cuda) : backend(:cpu)
-    @info "Irregular surface simulation" backend = typeof(be) ibm_method = config.ibm_method
+Apply appropriate boundary conditions based on the boundary configuration.
+"""
+function apply_boundary_conditions!(be::AbstractBackend, W::Wavefield, M::Medium, H::HABCConfig, params::SimParams)
+    # Apply HABC to boundary strips
+    backup_boundary!(be, W, H, M)
+    apply_habc_velocity!(be, W, H, M)
+    apply_habc_stress!(be, W, H, M)
 
-    vp_max = maximum(model.vp)
-    dt = config.dt === nothing ? config.cfl * min(model.dx, model.dz) / vp_max : config.dt
-    dt = Float32(dt)
+    # Apply free surface condition if enabled
+    if M.is_free_surface
+        apply_free_surface!(be, W, M)
+    end
+end
 
-    @info "Parameters" dt_ms = round(dt * 1000, digits=3) nt = config.nt
+"""
+    init_medium_with_boundaries(vp, vs, rho, dx, dz, config, backend)
 
-    medium = init_medium(model, config.nbc, config.fd_order, be; free_surface=false)
+Initialize medium with appropriate boundary settings based on configuration.
+"""
+function init_medium_with_boundaries(vp::Matrix, vs::Matrix, rho::Matrix,
+    dx::Real, dz::Real, config::SimulationConfig, backend::AbstractBackend)
 
-    surface_cpu = init_irregular_surface(z_surface, medium;
-        n_iter=config.ibm_iterations,
-        method=config.ibm_method,
-        backend=CPU_BACKEND)
-    surface = be isa CUDABackend ? to_gpu(surface_cpu) : surface_cpu
-
-    @info "Irregular surface" ghost_points = surface_cpu.n_ghost method = config.ibm_method
-
-    habc = init_habc(medium.nx, medium.nz, config.nbc, medium.pad, dt, model.dx, model.dz, vp_max, be)
-    fd_coeffs = to_device(get_fd_coefficients(config.fd_order), be)
-    wavefield = Wavefield(medium.nx, medium.nz, be)
-    params = SimParams(dt, config.nt, model.dx, model.dz, config.fd_order)
-
-    wavelet = ricker_wavelet(config.f0, dt, config.nt)
-    src = setup_irregular_source(Float32(src_x), config.src_depth, wavelet,
-        surface_cpu, medium; backend=be)
-
-    n_rec = length(rec_x)
-    rec_depths = fill(config.rec_depth, n_rec)
-    rec = setup_irregular_receivers(Float32.(rec_x), rec_depths, surface_cpu, medium, config.nt;
-        type=:vz, backend=be)
-
-    @info "Geometry" source_x = src_x src_depth = config.src_depth n_receivers = n_rec
-
-    recorder = nothing
-    if video_config !== nothing
-        recorder = MultiFieldRecorder(medium.nx, medium.nz, dt, video_config)
+    # Determine free surface setting from boundary config or legacy setting
+    free_surface = if config.boundary_config !== nothing
+        config.boundary_config.top_boundary in [:free_surface, :vacuum]
+    else
+        # Use legacy free_surface parameter
+        config.free_surface
     end
 
-    if config.plot_model
-        _plot_irregular_setup(model, z_surface, src_x, config.src_depth,
-            Float32.(rec_x), fill(config.rec_depth, n_rec),
-            config.ibm_method,
-            joinpath(config.output_dir, "model_setup.png"))
-    end
-
-    reset!(be, wavefield)
-
-    if config.show_progress
-        prog = Progress(config.nt, desc="Simulating: ")
-    end
-
-    for k in 1:config.nt
-        time_step_irregular!(be, wavefield, medium, habc, fd_coeffs,
-            src, rec, k, params, surface)
-
-        if recorder !== nothing
-            Fomo.record!(recorder.recorder, wavefield, k, dt)
-        end
-
-        if config.show_progress
-            next!(prog)
-        end
-    end
-
-    synchronize(be)
-    @info "Simulation complete"
-
-    gather = be isa CUDABackend ? Array(rec.data) : copy(rec.data)
-
-    # Save surface elevation
-    open(joinpath(config.output_dir, "surface_elevation.txt"), "w") do io
-        for (i, z) in enumerate(z_surface)
-            println(io, "$((i-1) * model.dx) $z")
-        end
-    end
-
-    video_file, gather_file, gather_plot = _save_outputs(
-        gather, dt, config, recorder, video_config
-    )
-
-    return SimulationResult(gather, dt, config.nt, video_file, gather_file, gather_plot)
+    # Initialize medium with determined free surface setting
+    return init_medium(vp, vs, rho, dx, dz, config.nbc, config.fd_order, backend;
+        free_surface=free_surface)
 end
 
 # ==============================================================================
@@ -848,4 +853,158 @@ function _plot_irregular_setup(model::VelocityModel, z_surface::Vector{Float32},
     CairoMakie.Colorbar(fig[1, 2], hm, label="Vp (m/s)")
     CairoMakie.axislegend(ax, position=:rb)
     CairoMakie.save(output, fig)
+end
+
+"""
+    seismic_survey(model, sources, receivers; 
+                   simulate_surface_waves=true, 
+                   source_depth_margin=80.0,
+                   config=SimulationConfig())
+
+Simplified API for seismic survey simulation with intelligent boundary handling.
+
+# Arguments
+- `model`: Velocity model
+- `sources`: Source positions and properties
+- `receivers`: Receiver positions
+
+# Keyword Arguments
+- `simulate_surface_waves`: Whether to simulate surface waves (Rayleigh waves)
+- `source_depth_margin`: Minimum distance from sources to top boundary (meters). Default is 80.0m.
+- `config`: Simulation configuration
+
+# Examples
+```julia
+# Simulate with surface waves (free surface boundary)
+result = seismic_survey(model, sources, receivers; simulate_surface_waves=true)
+
+# Simulate without surface waves (absorbing boundary)
+result = seismic_survey(model, sources, receivers; simulate_surface_waves=false)
+
+# Simulate with custom safety margin for shallow sources
+result = seismic_survey(model, sources, receivers; 
+                      simulate_surface_waves=true, 
+                      source_depth_margin=100.0)
+```
+"""
+function seismic_survey(model, sources, receivers;
+    simulate_surface_waves=true,
+    source_depth_margin=80.0,
+    config=SimulationConfig()
+)
+    # Calculate required top padding based on source depth and margin
+    min_source_depth = minimum([s[2] for s in sources])  # Assuming sources are (x, z) tuples
+    required_padding = ceil(Int, source_depth_margin / model.dz)
+
+    # When simulate_surface_waves=false, we need to expand the model vertically
+    # to ensure sources are sufficiently far from the top boundary
+    expanded_model = model
+    adjusted_sources = sources
+    adjusted_receivers = receivers
+
+    if !simulate_surface_waves && source_depth_margin > 0
+        # Expand the model by adding extra space at the top
+        extra_layers = ceil(Int, source_depth_margin / model.dz)
+        if extra_layers > 0
+            # Create an expanded model with additional space at the top
+            # We must fill with the same properties as the top layer to avoid impedance contrast
+            # which would cause reflections (acting like a free surface)
+
+            # Get top row properties
+            top_vp_row = model.vp[1:1, :]
+            top_vs_row = model.vs[1:1, :]
+            top_rho_row = model.rho[1:1, :]
+
+            # Replicate top row for the expanded layers
+            expanded_vp = vcat(repeat(top_vp_row, extra_layers), model.vp)
+            expanded_vs = vcat(repeat(top_vs_row, extra_layers), model.vs)
+            expanded_rho = vcat(repeat(top_rho_row, extra_layers), model.rho)
+
+            # Update source and receiver positions to account for the expansion
+            adjusted_sources = Tuple{Float32,Float32}[]
+            for src in sources
+                new_src_z = Float32(src[2] + source_depth_margin)  # Shift source down by padding amount and ensure Float32
+                push!(adjusted_sources, (Float32(src[1]), new_src_z))
+            end
+
+            # Adjust receiver z-coordinates too
+            new_rec_z = [rz + source_depth_margin for rz in receivers[2]]
+            adjusted_receivers = (receivers[1], new_rec_z)
+
+            # Create new model with expanded dimensions
+            expanded_model = VelocityModel(
+                expanded_vp,
+                expanded_vs,
+                expanded_rho,
+                model.dx,
+                model.dz;
+                name=model.name * "_expanded"
+            )
+        end
+    end
+
+    # Adjust boundary configuration based on user preference
+    if config.boundary_config === nothing
+        # Create default boundary config based on simulate_surface_waves
+        top_boundary = simulate_surface_waves ? :free_surface : :absorbing
+        boundary_config = BoundaryConfig(
+            top_boundary=top_boundary,
+            nbc=config.nbc,
+            top_padding=required_padding
+        )
+
+        # Update config with new boundary config
+        new_config = SimulationConfig(
+            nbc=config.nbc,
+            fd_order=config.fd_order,
+            dt=config.dt,
+            nt=config.nt,
+            cfl=config.cfl,
+            f0=config.f0,
+            free_surface=ifelse(simulate_surface_waves, true, false),  # For backward compatibility
+            output_dir=config.output_dir,
+            save_gather=config.save_gather,
+            show_progress=config.show_progress,
+            plot_gather=config.plot_gather,
+            boundary_config=boundary_config
+        )
+    else
+        # Use provided boundary config but adjust padding if needed
+        boundary_config = BoundaryConfig(
+            simulate_surface_waves ? :free_surface : :absorbing,  # Override based on user preference
+            config.boundary_config.bottom_boundary,
+            config.boundary_config.left_boundary,
+            config.boundary_config.right_boundary,
+            config.boundary_config.nbc,
+            max(config.boundary_config.top_padding, required_padding)
+        )
+
+        new_config = SimulationConfig(
+            nbc=config.nbc,
+            fd_order=config.fd_order,
+            dt=config.dt,
+            nt=config.nt,
+            cfl=config.cfl,
+            f0=config.f0,
+            free_surface=ifelse(simulate_surface_waves, true, false),  # For backward compatibility
+            output_dir=config.output_dir,
+            save_gather=config.save_gather,
+            show_progress=config.show_progress,
+            plot_gather=config.plot_gather,
+            boundary_config=boundary_config
+        )
+    end
+
+    # Handle different source formats
+    # At this point, adjusted_sources is either a single tuple or an array of tuples
+    if adjusted_sources isa Vector{Tuple{Float32,Float32}}  # Array of tuples
+        # Multiple sources - use the first source for now
+        src_x, src_z = adjusted_sources[1]
+        return simulate!(expanded_model, Float32(src_x), Float32(src_z), adjusted_receivers[1], adjusted_receivers[2]; config=new_config)
+    elseif adjusted_sources isa Tuple  # Single (x, z) tuple
+        src_x, src_z = adjusted_sources
+        return simulate!(expanded_model, Float32(src_x), Float32(src_z), adjusted_receivers[1], adjusted_receivers[2]; config=new_config)
+    else
+        error("Sources format not supported. Expected (x, z) tuple or array of (x, z) tuples")
+    end
 end

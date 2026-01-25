@@ -51,6 +51,24 @@ function inject_source!(::CUDABackend, W::Wavefield, src::Source, k::Int, dt::Fl
     return nothing
 end
 
+# Additional method for direct injection to specific field (used in vacuum formulation)
+function inject_source!(field::AbstractMatrix{Float32}, i::Int, j::Int, value::Float32, ::CPUBackend)
+    field[i, j] += value
+    return nothing
+end
+
+function _inject_field_kernel!(field, i0, j0, value)
+    if threadIdx().x == 1 && blockIdx().x == 1
+        @inbounds field[i0, j0] += value
+    end
+    return nothing
+end
+
+function inject_source!(field::AbstractMatrix{Float32}, i::Int, j::Int, value::Float32, ::CUDABackend)
+    @cuda threads=1 blocks=1 _inject_field_kernel!(field, i, j, value)
+    return nothing
+end
+
 # ==============================================================================
 # Receiver Recording
 # ==============================================================================
@@ -99,6 +117,48 @@ function record_receivers!(::CUDABackend, W::Wavefield, rec::Receivers, k::Int)
     
     @cuda threads=256 blocks=cld(n_rec, 256) _record_kernel!(
         rec.data, field, rec.i, rec.j, k, n_rec
+    )
+    return nothing
+end
+
+# Additional method for direct recording to gather matrix (used in vacuum formulation)
+function record_receivers!(gather::AbstractMatrix{Float32}, W::Wavefield, rec::Receivers, k::Int, ::CPUBackend)
+    for r in 1:length(rec.i)
+        ri, rj = rec.i[r], rec.j[r]
+        if rec.type == :vz
+            gather[k, r] = W.vz[ri, rj]
+        elseif rec.type == :vx
+            gather[k, r] = W.vx[ri, rj]
+        elseif rec.type == :p
+            gather[k, r] = (W.txx[ri, rj] + W.tzz[ri, rj]) * 0.5f0
+        end
+    end
+    return nothing
+end
+
+function _record_direct_kernel!(gather, field, rec_i, rec_j, k, n_rec)
+    idx = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if idx <= n_rec
+        ii, jj = rec_i[idx], rec_j[idx]
+        @inbounds gather[k, idx] = field[ii, jj]
+    end
+    return nothing
+end
+
+function record_receivers!(gather::AbstractMatrix{Float32}, W::Wavefield, rec::Receivers, k::Int, ::CUDABackend)
+    n_rec = length(rec.i)
+    
+    # Select field based on type
+    field = if rec.type == :vz
+        W.vz
+    elseif rec.type == :vx
+        W.vx
+    else  # :p
+        (W.txx + W.tzz) * 0.5f0  # This would need special handling
+    end
+    
+    @cuda threads=256 blocks=cld(n_rec, 256) _record_direct_kernel!(
+        gather, field, rec.i, rec.j, k, n_rec
     )
     return nothing
 end

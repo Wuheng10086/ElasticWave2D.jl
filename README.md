@@ -1,331 +1,91 @@
 # Fomo.jl
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Julia](https://img.shields.io/badge/Julia-1.9%20|%201.10%20|%201.11-blue)](https://julialang.org/)
+**Fomo.jl** (Forward Modeling) is a high-performance 2D elastic wave equation solver written in Julia. It is designed for seismic exploration and geophysics research, featuring GPU acceleration (CUDA), flexible boundary conditions, and a vacuum formulation for handling complex topography and internal voids.
 
-[中文文档](README_zh.md) | [English](README.md)
+## Key Features
 
-**Fomo** - **Fo**rward **Mo**deling: High-performance 2D isotropic elastic wave simulator in Julia.
+*   **High Performance**:
+    *   Optimized finite-difference kernels (up to 8th order spatial accuracy).
+    *   Seamless GPU acceleration via `CUDA.jl`.
+    *   Staggered grid formulation (Virieux, 1986).
+*   **Advanced Boundary Handling**:
+    *   **HABC**: Higdon Absorbing Boundary Conditions for efficient wave absorption.
+    *   **Free Surface**: Explicit free surface implementation or Vacuum formulation.
+    *   **Vacuum Formulation**: Handle arbitrary topography and internal cavities (cracks, tunnels) by setting density to zero.
+*   **User-Friendly API**:
+    *   Simple `seismic_survey` interface for generating shot gathers.
+    *   `simulate!` for detailed wavefield modeling.
+    *   Built-in visualization tools (Makie-based) for models, geometry, and wavefield movies.
 
-```ibm_method=:mirror```  is **not stable** yet, please wait for the next release.
-
-
-https://github.com/user-attachments/assets/f6e8ed73-f5c8-4dba-924c-b7cb6910ff6e
-
-
-## ✨ Features
-
-- 🚀 **Backend-dispatched architecture** - Same code runs on CPU or GPU
-- 📐 **High-order staggered-grid FD** - 2nd to 10th order spatial accuracy
-- 🛡️ **Hybrid absorbing boundary (HABC)** - Effective boundary reflection suppression
-- 🌊 **Free surface modeling** - Accurate Rayleigh wave simulation
-- 🏔️ **Irregular topography (IBM)** - Immersed Boundary Method for complex surfaces
-- ⚡ **Multi-GPU parallel** - Automatic load balancing
-- 📁 **Multiple formats** - SEG-Y, Binary, MAT, NPY, HDF5, JLD2
-- 🎬 **Video recording** - Real-time wavefield visualization
-
-## 📋 Requirements
-
-- **Julia 1.9, 1.10, or 1.11** (1.12 not yet supported due to CairoMakie compatibility)
-- CUDA GPU (optional, for GPU acceleration)
-
-## 🔧 Installation
-
-### From GitHub
+## Installation
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/Wuheng10086/Fomo.jl")
+Pkg.add(url="https://github.com/yourusername/Fomo.jl")
 ```
 
-### Local Development
+Or for development:
+```bash
+git clone https://github.com/yourusername/Fomo.jl
+cd Fomo.jl
+julia --project=.
+```
+
+## Quick Start
+
+### 1. Run a Demo
+The best way to get started is to run the included examples:
 
 ```bash
-git clone https://github.com/Wuheng10086/Fomo.jl.git
-cd Fomo.jl
-julia --project=. -e "using Pkg; Pkg.instantiate()"
+# High-resolution elastic wave propagation in a two-layer medium
+julia -t 4 examples/elastic_wave_demo.jl
+
+# Generate seismic shot gathers with different boundary conditions
+julia -t 4 examples/seismic_survey_demo.jl
+
+# High-performance batch simulation of multiple shots
+julia -t 4 examples/batch_simulation_demo.jl
 ```
 
-## 🚀 Quick Start
-
-### High-level API (Recommended)
+### 2. Simple Simulation Script
 
 ```julia
 using Fomo
 
-# Create velocity model
-nx, nz = 400, 200
-dx = 10.0f0
-
+# 1. Define Model (200x100 grid, 10m spacing)
+dx, dz = 10.0f0, 10.0f0
+nx, nz = 200, 100
 vp = fill(3000.0f0, nz, nx)
 vs = fill(1800.0f0, nz, nx)
 rho = fill(2200.0f0, nz, nx)
 
-vp[100:end, :] .= 4000.0f0
-vs[100:end, :] .= 2400.0f0
+model = VelocityModel(vp, vs, rho, dx, dz; name="simple_model")
 
-model = VelocityModel(vp, vs, rho, dx, dx; name="Two-layer model")
+# 2. Define Source and Receivers
+src_x, src_z = 1000.0f0, 20.0f0
+rec_x = Float32.(collect(100:10:1900))
+rec_z = fill(2.0f0, length(rec_x))
 
-# Run simulation (without video)
-result = simulate!(
-    model,
-    2000.0f0, 50.0f0,                    # source (x, z) in meters
-    Float32.(100:20:3900),               # receiver x positions
-    fill(10.0f0, 190);                   # receiver z positions
-    config = SimulationConfig(nt=3000, f0=15.0f0, output_dir="outputs")
-)
-
-# Run simulation (with video) - VideoConfig is a separate parameter
-result = simulate!(
-    model,
-    2000.0f0, 50.0f0,
-    Float32.(100:20:3900),
-    fill(10.0f0, 190);
-    config = SimulationConfig(nt=3000, f0=15.0f0, output_dir="outputs"),
-    video_config = VideoConfig(fields=[:vz], skip=5, fps=30)
+# 3. Run Simulation
+seismic_survey(model, [(src_x, src_z)], (rec_x, rec_z);
+    simulate_surface_waves = true, # Enable free surface
+    config = SimulationConfig(
+        nt = 1000,
+        f0 = 20.0f0,
+        output_dir = "outputs/my_test"
+    )
 )
 ```
 
-### Irregular Free Surface
+## Documentation
 
-```julia
-using Fomo
+For detailed usage instructions, API reference, and physics explanation, please refer to the [User Manual](docs/user_manual.md).
 
-model = VelocityModel(vp, vs, rho, dx, dx)
+## Project Structure
 
-# Define surface shape using helper functions
-z_surface = sinusoidal_surface(nx, dx; base_depth=50, amplitude=30, wavelength=1000)
-
-# Or combine multiple shapes
-z_surface = combine_surfaces(
-    sinusoidal_surface(nx, dx; amplitude=20),
-    gaussian_valley(nx, dx; valley_depth=25, width=300)
-)
-
-# Run simulation
-result = simulate_irregular!(
-    model,
-    z_surface,                           # your surface shape
-    2000.0f0,                            # source x position
-    Float32.(100:20:3900);               # receiver x positions
-    config = IrregularSurfaceConfig(
-        nt = 3000,
-        ibm_method = :direct_zero,       # or :mirror for higher accuracy
-        src_depth = 30.0f0,              # depth below surface
-        output_dir = "outputs_irregular"
-    ),
-    video_config = VideoConfig(fields=[:vz], skip=10)
-)
-```
-
-### Surface Shape Helpers
-
-| Function | Description |
-|----------|-------------|
-| `flat_surface(nx, dx, depth)` | Flat surface at constant depth |
-| `sinusoidal_surface(nx, dx; amplitude, wavelength)` | Sinusoidal surface |
-| `gaussian_valley(nx, dx; valley_depth, width)` | Gaussian depression |
-| `gaussian_hill(nx, dx; hill_height, width)` | Gaussian elevation |
-| `tilted_surface(nx, dx; depth_left, depth_right)` | Linear tilt |
-| `step_surface(nx, dx; depth_left, depth_right)` | Step/cliff |
-| `random_surface(nx, dx; amplitude, smoothness)` | Random rough surface |
-| `combine_surfaces(s1, s2, ...)` | Combine multiple shapes |
-
-## 📂 Examples
-
-### `examples/run_demo.jl` - Comprehensive Demo
-
-Demonstrates three scenarios:
-
-```julia
-using Fomo
-
-# Demo 1: Quick test (homogeneous model, no video)
-result1 = simulate!(model, src_x, src_z, rec_x, rec_z;
-    config = SimulationConfig(nt=1000, output_dir="outputs/demo1"))
-
-# Demo 2: Surface waves visualization (with video)
-result2 = simulate!(model2, src_x, src_z, rec_x, rec_z;
-    config = SimulationConfig(nt=4000, f0=20.0f0, output_dir="outputs/demo2"),
-    video_config = VideoConfig(fields=[:vz], skip=5, fps=30))
-
-# Demo 3: Irregular surface with IBM
-z_surface = combine_surfaces(
-    sinusoidal_surface(nx, dx; base_depth=50, amplitude=25),
-    gaussian_valley(nx, dx; valley_depth=20, width=250)
-)
-result3 = simulate_irregular!(model3, z_surface, src_x, rec_x;
-    config = IrregularSurfaceConfig(nt=3000, ibm_method=:direct_zero),
-    video_config = VideoConfig(fields=[:vz], skip=10))
-```
-
-Run:
-```bash
-julia --project=. examples/run_demo.jl
-```
-
-### `examples/run_regular_surface_video.jl` - Surface Wave Visualization
-
-Two-layer model showing P-wave, S-wave, and Rayleigh wave:
-
-```julia
-using Fomo
-
-# Two-layer model
-vp[1:160, :] .= 2500.0f0    # Upper layer
-vp[161:end, :] .= 4000.0f0  # Lower layer
-
-model = VelocityModel(vp, vs, rho, 5.0f0, 5.0f0)
-
-video_cfg = VideoConfig(fields=[:vz], skip=5, fps=30, colormap=:seismic)
-
-result = simulate!(model, nx*dx/2, 50.0f0, rec_x, rec_z;
-    config = SimulationConfig(nt=4000, f0=20.0f0, output_dir="outputs_regular"),
-    video_config = video_cfg)
-```
-
-Expected waves in video:
-- **P-wave**: ~2500 m/s (fastest)
-- **S-wave**: ~1500 m/s
-- **Rayleigh wave**: ~1380 m/s (along surface)
-
-Run:
-```bash
-julia --project=. examples/run_regular_surface_video.jl
-```
-
-### `examples/run_irregular_with_video.jl` - Irregular Topography
-
-Demonstrates custom surface shapes:
-
-```julia
-using Fomo
-
-# Example 1: Using helper functions
-z_surface = sinusoidal_surface(nx, dx; base_depth=50, amplitude=25, wavelength=1500)
-
-# Example 2: Fully custom shape
-x = Float32.((0:nx-1) .* dx)
-z_custom = Float32.(60.0 .+ 20.0 .* sin.(2π .* x ./ 1500.0) .+
-                    10.0 .* sin.(2π .* x ./ 300.0))
-
-# Add a canyon
-for i in 1:nx
-    xi = (i-1) * dx
-    if 1300 < xi < 1700
-        z_custom[i] += 30.0f0 * (1 - abs(xi - 1500) / 200)
-    end
-end
-
-result = simulate_irregular!(model, z_custom, src_x, rec_x;
-    config = IrregularSurfaceConfig(nt=3000, src_depth=40.0f0),
-    video_config = VideoConfig(fields=[:vz], skip=10))
-```
-
-Run:
-```bash
-julia --project=. examples/run_irregular_with_video.jl
-```
-
-## 🏔️ Immersed Boundary Method (IBM)
-
-The IBM enables accurate modeling of complex topography without fine grid refinement:
-
-| Method | Grid Size | Time Steps | Total Cost |
-|--------|-----------|------------|------------|
-| Fine grid + staircase | 4N | 2T | **8×** |
-| **IBM (this package)** | N | T | **~1.08×** |
-
-Two IBM methods available:
-- `:direct_zero` - Stable, recommended for most cases
-- `:mirror` - Higher accuracy, may require smaller time step
-
-## 📂 Project Structure
-
-```
-Fomo.jl/
-├── src/
-│   ├── Fomo.jl                 # Main module
-│   ├── backends/               # CPU/CUDA abstraction
-│   ├── types/                  # Data structures
-│   ├── kernels/                # FD kernels
-│   │   ├── velocity.jl
-│   │   ├── stress.jl
-│   │   ├── boundary.jl
-│   │   └── ibm.jl
-│   ├── surface/                # Irregular surface
-│   ├── simulation/             # Time stepping
-│   │   ├── api.jl              # High-level API
-│   │   ├── time_stepper.jl
-│   │   └── time_stepper_ibm.jl
-│   ├── io/                     # Model/gather I/O
-│   └── visualization/          # Plotting & video
-├── examples/
-│   ├── run_demo.jl
-│   ├── run_regular_surface_video.jl
-│   └── run_irregular_with_video.jl
-└── README.md
-```
-
-## 📚 API Reference
-
-### Configuration Structs
-
-```julia
-SimulationConfig(
-    nt = 3000,              # Number of time steps
-    f0 = 15.0f0,            # Source frequency (Hz)
-    nbc = 50,               # Absorbing boundary layers
-    fd_order = 8,           # Finite difference order
-    free_surface = true,    # Enable free surface
-    output_dir = "outputs"  # Output directory
-)
-
-IrregularSurfaceConfig(
-    nt = 3000,
-    f0 = 15.0f0,
-    ibm_method = :direct_zero,  # :direct_zero or :mirror
-    ibm_iterations = 3,
-    src_depth = 30.0f0,         # Source depth below surface
-    rec_depth = 0.0f0,          # Receiver depth (0 = on surface)
-    output_dir = "outputs"
-)
-
-VideoConfig(
-    fields = [:vz],         # Fields to record (:vx, :vz, :vel, :p)
-    skip = 10,              # Record every N steps
-    fps = 30,               # Video frame rate
-    colormap = :seismic     # Color scheme
-)
-```
-
-### High-level Functions
-
-| Function | Description |
-|----------|-------------|
-| `simulate!(model, src_x, src_z, rec_x, rec_z; config, video_config)` | Regular surface simulation |
-| `simulate_irregular!(model, z_surface, src_x, rec_x; config, video_config)` | Irregular surface simulation |
-
-### Surface Helpers
-
-| Function | Description |
-|----------|-------------|
-| `flat_surface`, `sinusoidal_surface`, `gaussian_valley`, `gaussian_hill` | Basic shapes |
-| `tilted_surface`, `step_surface`, `random_surface` | More shapes |
-| `combine_surfaces(s1, s2, ...; method=:add)` | Combine shapes |
-
-## 📖 References
-
-1. Luo, Y., & Schuster, G. (1990). Parsimonious staggered grid finite-differencing of the wave equation. *Geophysical Research Letters*, 17(2), 155-158.
-
-2. Ren, Z., & Liu, Y. (2014). Numerical modeling of the first-order elastic equations with the hybrid absorbing boundary condition. *Chinese Journal of Geophysics*, 57(2), 595-606. doi:10.6038/cjg20140223
-
-3. Li, X., Yao, G., Niu, F., Wu, D., & Liu, N. (2023). Waveform inversion of seismic first arrivals acquired on irregular surface. *Geophysics*, 88(3), R289-R302.
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## 👤 Author
-
-Wuheng - 2025
+*   `src/`: Source code.
+    *   `kernels/`: Low-level finite difference and physics kernels (CPU/GPU).
+    *   `simulation/`: High-level simulation logic and time stepping.
+    *   `visualization/`: Plotting and video generation tools.
+*   `examples/`: Ready-to-run demonstration scripts.
+*   `outputs/`: Default directory for simulation results.

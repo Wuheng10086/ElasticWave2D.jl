@@ -67,6 +67,7 @@ results/
 # VSCode
 .vscode/
 *.code-workspace
+.trae/
 
 # JetBrains (IntelliJ, PyCharm, etc.)
 .idea/
