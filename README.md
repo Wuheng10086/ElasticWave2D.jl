@@ -1,91 +1,245 @@
-# Fomo.jl
+# ElasticWave2D.jl
 
-**Fomo.jl** (Forward Modeling) is a high-performance 2D elastic wave equation solver written in Julia. It is designed for seismic exploration and geophysics research, featuring GPU acceleration (CUDA), flexible boundary conditions, and a vacuum formulation for handling complex topography and internal voids.
+[🇨🇳 中文](README_zh.md) | **English**
 
-## Key Features
+<p align="center">
+  <b>GPU-accelerated 2D elastic wave simulation in Julia</b><br>
+  <i>Run seismic forward modeling on your laptop — no cluster, no complex setup</i>
+</p>
 
-*   **High Performance**:
-    *   Optimized finite-difference kernels (up to 8th order spatial accuracy).
-    *   Seamless GPU acceleration via `CUDA.jl`.
-    *   Staggered grid formulation (Virieux, 1986).
-*   **Advanced Boundary Handling**:
-    *   **HABC**: Higdon Absorbing Boundary Conditions for efficient wave absorption.
-    *   **Free Surface**: Explicit free surface implementation or Vacuum formulation.
-    *   **Vacuum Formulation**: Handle arbitrary topography and internal cavities (cracks, tunnels) by setting density to zero.
-*   **User-Friendly API**:
-    *   Simple `seismic_survey` interface for generating shot gathers.
-    *   `simulate!` for detailed wavefield modeling.
-    *   Built-in visualization tools (Makie-based) for models, geometry, and wavefield movies.
+<p align="center">
+  <img src="docs/images/wavefield.gif" width="600" alt="Wavefield Animation">
+</p>
+
+## Why This Project?
+
+Traditional seismic simulation codes are hard to install, poorly documented, and require HPC clusters. **ElasticWave2D.jl** is different:
+
+- ✅ **One-line install** — Pure Julia, no Fortran/C compilation
+- ✅ **Runs on gaming GPUs** — GTX 1060, RTX 3060, etc.
+- ✅ **CPU optimized too** — Multi-threaded with `julia -t auto`
+- ✅ **Student-friendly** — Clear examples, readable code
+- ✅ **Flexible boundaries** — HABC, free surface, vacuum formulation
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| **GPU Acceleration** | CUDA.jl backend, 10-50x faster than CPU |
+| **CPU Optimized** | Multi-threaded kernels via `julia -t auto` |
+| **Staggered Grid FD** | 2nd-10th order accuracy (Virieux 1986) |
+| **HABC Boundaries** | Higdon Absorbing BC (Ren & Liu 2014) |
+| **Vacuum Formulation** | Irregular topography, tunnels, cavities (Zeng et al. 2012) |
+| **Video Recording** | Wavefield snapshots → MP4 |
+| **Multiple Formats** | SEG-Y, Binary, HDF5, NPY, MAT, JLD2 |
 
 ## Installation
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/yourusername/Fomo.jl")
+Pkg.add(url="https://github.com/Wuheng10086/ElasticWave2D.jl")
 ```
 
-Or for development:
-```bash
-git clone https://github.com/yourusername/Fomo.jl
-cd Fomo.jl
-julia --project=.
-```
+**Requirements**: Julia 1.9+. GPU optional (auto-detects CUDA).
 
 ## Quick Start
 
-### 1. Run a Demo
-The best way to get started is to run the included examples:
-
-```bash
-# High-resolution elastic wave propagation in a two-layer medium
-julia -t 4 examples/elastic_wave_demo.jl
-
-# Generate seismic shot gathers with different boundary conditions
-julia -t 4 examples/seismic_survey_demo.jl
-
-# High-performance batch simulation of multiple shots
-julia -t 4 examples/batch_simulation_demo.jl
-```
-
-### 2. Simple Simulation Script
-
 ```julia
-using Fomo
+using ElasticWave2D
 
-# 1. Define Model (200x100 grid, 10m spacing)
-dx, dz = 10.0f0, 10.0f0
+# Create a simple two-layer model
 nx, nz = 200, 100
-vp = fill(3000.0f0, nz, nx)
-vs = fill(1800.0f0, nz, nx)
-rho = fill(2200.0f0, nz, nx)
+dx, dz = 10.0f0, 10.0f0
 
-model = VelocityModel(vp, vs, rho, dx, dz; name="simple_model")
+vp = fill(2000.0f0, nz, nx)
+vs = fill(1200.0f0, nz, nx)
+rho = fill(2000.0f0, nz, nx)
+vp[50:end, :] .= 3500.0f0  # Faster layer below
 
-# 2. Define Source and Receivers
+model = VelocityModel(vp, vs, rho, dx, dz)
+
+# Survey geometry
 src_x, src_z = 1000.0f0, 20.0f0
 rec_x = Float32.(collect(100:10:1900))
-rec_z = fill(2.0f0, length(rec_x))
+rec_z = fill(10.0f0, length(rec_x))
 
-# 3. Run Simulation
-seismic_survey(model, [(src_x, src_z)], (rec_x, rec_z);
-    simulate_surface_waves = true, # Enable free surface
+# Run simulation with vacuum free surface
+result = seismic_survey(
+    model,
+    (src_x, src_z),
+    (rec_x, rec_z);
+    surface_method = :vacuum,    # :vacuum, :free_surface, or :absorbing
+    vacuum_layers = 5,
+    config = SimulationConfig(nt=1000, f0=20.0f0)
+)
+```
+
+## Examples
+
+### 🎬 Elastic Wave Demo
+High-resolution wave propagation in a two-layer medium with video output.
+
+```bash
+julia -t auto examples/elastic_wave_demo.jl
+```
+
+<p align="center">
+  <img src="docs/images/elastic_wave_setup.png" width="400" alt="Elastic Wave Setup">
+  <img src="docs/images/elastic_wave_gather.png" width="400" alt="Elastic Wave Gather">
+</p>
+
+---
+
+### 🏗️ Tunnel Detection (Engineering)
+Detect underground cavities using seismic diffraction. Uses vacuum formulation for both free surface and tunnel cavity.
+
+```bash
+julia -t auto examples/tunnel_detection_demo.jl
+```
+
+<p align="center">
+  <img src="docs/images/tunnel_setup.png" width="400" alt="Tunnel Setup">
+  <img src="docs/images/tunnel_gather.png" width="400" alt="Tunnel Gather">
+</p>
+
+**What to look for**: Diffracted waves from tunnel edges, shadow zone behind tunnel.
+
+---
+
+### 🛢️ Exploration Seismic (Petroleum)
+Image an anticlinal structure — a classic hydrocarbon trap.
+
+```bash
+julia -t auto examples/exploration_seismic_demo.jl
+```
+
+<p align="center">
+  <img src="docs/images/exploration_setup.png" width="400" alt="Exploration Setup">
+  <img src="docs/images/exploration_gather.png" width="400" alt="Exploration Gather">
+</p>
+
+**What to look for**: Reflection "pull-up" at anticline crest, multiple layer reflections.
+
+---
+
+### 🔬 Boundary Comparison Demo
+Compare different surface handling methods side-by-side.
+
+```bash
+julia -t auto examples/seismic_survey_demo.jl
+```
+
+| Method | Surface Waves | Use Case |
+|--------|--------------|----------|
+| `:absorbing` | ❌ | Body waves only |
+| `:free_surface` | ✅ | Classic explicit BC |
+| `:vacuum` | ✅ | Unified approach (recommended) |
+
+**Surface wave comparison** — Both methods produce Rayleigh waves, with nearly identical results:
+
+<p align="center">
+  <img src="docs/images/freesurface_gather.png" width="400" alt="Explicit Free Surface">
+  <img src="docs/images/vacuum_gather.png" width="400" alt="Vacuum Formulation">
+</p>
+<p align="center">
+  <i>Left: Explicit free surface BC | Right: Vacuum formulation</i>
+</p>
+
+The vacuum method offers more flexibility (topography, internal voids) with comparable accuracy.
+
+## API Reference
+
+### `seismic_survey` — High-level Interface
+
+```julia
+seismic_survey(model, source, receivers;
+    surface_method = :vacuum,     # :vacuum, :free_surface, :absorbing
+    vacuum_layers = 10,           # Number of vacuum layers (for :vacuum)
+    config = SimulationConfig(),
+    video_config = nothing
+)
+```
+
+### `simulate!` — Low-level Interface
+
+```julia
+result = simulate!(model, src_x, src_z, rec_x, rec_z;
     config = SimulationConfig(
-        nt = 1000,
-        f0 = 20.0f0,
-        output_dir = "outputs/my_test"
+        nt = 3000,           # Time steps
+        f0 = 15.0f0,         # Source frequency (Hz)
+        fd_order = 8,        # FD accuracy order
+        free_surface = true, # Explicit free surface BC
+        output_dir = "outputs"
+    ),
+    video_config = VideoConfig(
+        fields = [:vz],      # Record vertical velocity
+        skip = 20,           # Frame interval
+        fps = 30
     )
 )
 ```
 
-## Documentation
+### Surface Method Comparison
 
-For detailed usage instructions, API reference, and physics explanation, please refer to the [User Manual](docs/user_manual.md).
+| Parameter | `free_surface=true` | `surface_method=:vacuum` |
+|-----------|---------------------|--------------------------|
+| Implementation | Explicit BC | ρ=0 layers at top |
+| Topography | ❌ Flat only | ✅ Any shape |
+| Internal voids | ❌ | ✅ Tunnels, caves |
+| Consistency | — | Same physics everywhere |
 
-## Project Structure
+## Performance
 
-*   `src/`: Source code.
-    *   `kernels/`: Low-level finite difference and physics kernels (CPU/GPU).
-    *   `simulation/`: High-level simulation logic and time stepping.
-    *   `visualization/`: Plotting and video generation tools.
-*   `examples/`: Ready-to-run demonstration scripts.
-*   `outputs/`: Default directory for simulation results.
+**GPU** (RTX 3060, 12GB):
+
+| Grid Size | Time Steps | Runtime |
+|-----------|------------|---------|
+| 400×200 | 3000 | ~8 sec |
+| 800×400 | 5000 | ~45 sec |
+| 1200×600 | 8000 | ~3 min |
+
+**CPU** (8-core, with `-t auto`): ~10-20x slower than GPU, but still practical for small-medium models.
+
+## Why I Built This
+
+As a geophysics student, I struggled with existing seismic simulation tools like SOFI2D and SPECFEM — they require Linux, complex `make` configurations, and endless dependency issues. I just wanted to run a simple forward model on my laptop without spending days on setup.
+
+I also found that PML (Perfectly Matched Layer) boundaries are computationally expensive. HABC (Higdon Absorbing Boundary Conditions) offers similar absorption quality with much better efficiency, which matters when you're running on a gaming GPU instead of a cluster.
+
+So I built ElasticWave2D.jl — a tool I wish I had when I started. If you're a student with a laptop and curiosity, this is for you.
+
+## References
+
+1. Virieux, J. (1986). P-SV wave propagation in heterogeneous media: Velocity-stress finite-difference method. *Geophysics*, 51(4), 889-901.
+
+2. Zeng, C., Xia, J., Miller, R. D., & Tsoflias, G. P. (2012). An improved vacuum formulation for 2D finite-difference modeling of Rayleigh waves including surface topography and internal discontinuities. *Geophysics*, 77(1), T1-T9.
+
+3. Ren, Z., & Liu, Y. (2014). A Higdon absorbing boundary condition. *Journal of Geophysics and Engineering*, 11(6), 065007.
+
+## Citation
+
+If you use ElasticWave2D.jl in your research, please cite:
+
+```bibtex
+@software{elasticwave2d,
+  author = {Wu Heng},
+  title = {ElasticWave2D.jl: GPU-accelerated 2D Elastic Wave Simulation},
+  url = {https://github.com/Wuheng10086/ElasticWave2D.jl},
+  year = {2025}
+}
+```
+
+## Why I Built This
+
+As a geophysics student, I struggled with existing tools:
+
+- **SOFI3D, Specfem2D** — Require Linux, `make`, MPI configuration... I spent more time debugging compilation errors than doing actual research.
+- **PML boundaries** — Widely used but computationally expensive. HABC achieves similar absorption with fewer layers and less computation.
+
+So I built ElasticWave2D.jl: a tool that **just works** — `Pkg.add()` and you're ready to go. No cmake, no Fortran compiler, no MPI headaches. 
+
+If you're a student who just wants to run some simulations and learn wave physics, this is for you.
+
+## License
+
+MIT License

@@ -1,9 +1,9 @@
-using Fomo
+using ElasticWave2D
 using Printf
 using Dates
 
 function batch_simulation_demo()
-    println("Fomo.jl - High Performance Batch Simulation Demo")
+    println("ElasticWave2D.jl - High Performance Batch Simulation Demo")
     println("================================================")
 
     # 1. Define Model

@@ -1,12 +1,12 @@
 # ==============================================================================
-# Fomo.jl - Forward Modeling
+# ElasticWave2D.jl
 #
 # High-Performance 2D Elastic Wave Simulation Framework
 #
 # Project Structure:
 # ==================
 # src/
-# ├── Fomo.jl                 # Main module
+# ├── ElasticWave2D.jl                 # Main module
 # ├── backends/               # Hardware abstraction
 # │   └── backend.jl          # CPU/CUDA backend
 # ├── types/                  # Data structures
@@ -36,7 +36,7 @@
 #
 # ==============================================================================
 
-module Fomo
+module ElasticWave2D
 
 # ==============================================================================
 # Dependencies
@@ -60,9 +60,9 @@ const CUDA_AVAILABLE = Ref(false)
 function __init__()
     if CUDA.functional()
         CUDA_AVAILABLE[] = true
-        @info "Fomo: CUDA functional, GPU acceleration enabled"
+        @info "ElasticWave2D: CUDA functional, GPU acceleration enabled"
     else
-        @info "Fomo: CUDA not functional (no GPU), using CPU mode"
+        @info "ElasticWave2D: CUDA not functional (no GPU), using CPU mode"
     end
 end
 
@@ -176,4 +176,4 @@ include("io/model_io.jl")
 include("io/gather_io.jl")
 include("io/geometry_io.jl")
 
-end # module Fomo
+end # module ElasticWave2D

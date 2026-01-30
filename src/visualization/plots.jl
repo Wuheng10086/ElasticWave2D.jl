@@ -1,7 +1,7 @@
 # ==============================================================================
 # visualization/plots.jl
 #
-# Static plotting functions for Fomo.jl
+# Static plotting functions for ElasticWave2D.jl
 # - Survey setup visualization
 # - Irregular surface plots
 # - Shot gather with surface

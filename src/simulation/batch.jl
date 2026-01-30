@@ -333,7 +333,7 @@ function benchmark_shots(
     n_warmup::Int=2
 )
     println("="^60)
-    println("  Fomo.jl Shot Benchmark")
+    println("  ElasticWave2D.jl Shot Benchmark")
     println("="^60)
     println()
 

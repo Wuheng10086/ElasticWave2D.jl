@@ -26,25 +26,25 @@ The grid indices (`src_i`, `src_j`, `rec_i_idx`, `rec_j_idx`) are also provided.
 struct SurveyGeometry
     # Shot info
     shot_id::Int
-    
+
     # Source position - ACTUAL discretized position
     src_x::Float32          # Source X position (m) - discretized
     src_z::Float32          # Source Z position (m) - discretized
     src_i::Int              # Source grid index in X
     src_j::Int              # Source grid index in Z
-    
+
     # Receiver info - ACTUAL discretized positions
     n_rec::Int              # Number of receivers
     rec_x::Vector{Float32}  # Receiver X positions (m) - discretized
     rec_z::Vector{Float32}  # Receiver Z positions (m) - discretized
     rec_i_idx::Vector{Int}  # Receiver grid indices in X
     rec_j_idx::Vector{Int}  # Receiver grid indices in Z
-    
+
     # Time info
     dt::Float32             # Time sampling (s)
     nt::Int                 # Number of time samples
     t_max::Float32          # Total recording time (s)
-    
+
     # Grid info (physical domain, excluding padding)
     dx::Float32
     dz::Float32
@@ -60,7 +60,7 @@ Geometry for multiple shots (entire survey).
 struct MultiShotGeometry
     n_shots::Int
     shots::Vector{SurveyGeometry}
-    
+
     # Common parameters
     dt::Float32
     nt::Int
@@ -84,22 +84,22 @@ calculated from the grid indices used during simulation.
 """
 function create_geometry(result::ShotResult, medium::Medium, params::SimParams)
     pad = medium.pad
-    
+
     # Convert grid indices to ACTUAL physical coordinates
     # These are the discretized positions, not the original input!
     src_x = Float32((result.src_i - pad - 1) * medium.dx)
     src_z = Float32((result.src_j - pad - 1) * medium.dz)
-    
+
     n_rec = length(result.rec_i)
     rec_x = Float32[(result.rec_i[r] - pad - 1) * medium.dx for r in 1:n_rec]
     rec_z = Float32[(result.rec_j[r] - pad - 1) * medium.dz for r in 1:n_rec]
-    
+
     # Grid indices relative to physical domain (0-based, for external use)
     src_i_phys = result.src_i - pad
     src_j_phys = result.src_j - pad
     rec_i_phys = [result.rec_i[r] - pad for r in 1:n_rec]
     rec_j_phys = [result.rec_j[r] - pad for r in 1:n_rec]
-    
+
     return SurveyGeometry(
         result.shot_id,
         src_x, src_z, src_i_phys, src_j_phys,
@@ -107,7 +107,7 @@ function create_geometry(result::ShotResult, medium::Medium, params::SimParams)
         rec_x, rec_z, rec_i_phys, rec_j_phys,
         params.dt, params.nt, params.dt * params.nt,
         medium.dx, medium.dz,
-        medium.nx - 2*pad, medium.nz - 2*pad  # Physical grid size
+        medium.nx - 2 * pad, medium.nz - 2 * pad  # Physical grid size
     )
 end
 
@@ -119,13 +119,13 @@ Create geometry from multiple shot results.
 function create_geometry(results::Vector{ShotResult}, medium::Medium, params::SimParams)
     shots = [create_geometry(r, medium, params) for r in results]
     pad = medium.pad
-    
+
     return MultiShotGeometry(
         length(shots),
         shots,
         params.dt, params.nt,
         medium.dx, medium.dz,
-        medium.nx - 2*pad, medium.nz - 2*pad
+        medium.nx - 2 * pad, medium.nz - 2 * pad
     )
 end
 
@@ -151,7 +151,7 @@ save_geometry("shot_001_geom.txt", geom)
 """
 function save_geometry(path::String, geom::SurveyGeometry)
     ext = lowercase(splitext(path)[2])
-    
+
     if ext == ".jld2"
         _save_geometry_jld2(path, geom)
     elseif ext == ".json"
@@ -165,7 +165,7 @@ end
 
 function save_geometry(path::String, geom::MultiShotGeometry)
     ext = lowercase(splitext(path)[2])
-    
+
     if ext == ".jld2"
         _save_multigeom_jld2(path, geom)
     elseif ext == ".json"
@@ -184,22 +184,22 @@ end
 function _save_geometry_jld2(path::String, g::SurveyGeometry)
     jldsave(path;
         # Meta
-        shot_id = g.shot_id,
+        shot_id=g.shot_id,
         # Source - actual discretized position
-        src_x = g.src_x, src_z = g.src_z,
-        src_i = g.src_i, src_j = g.src_j,
+        src_x=g.src_x, src_z=g.src_z,
+        src_i=g.src_i, src_j=g.src_j,
         # Receivers - actual discretized positions
-        n_rec = g.n_rec,
-        rec_x = g.rec_x, rec_z = g.rec_z,
-        rec_i = g.rec_i_idx, rec_j = g.rec_j_idx,
+        n_rec=g.n_rec,
+        rec_x=g.rec_x, rec_z=g.rec_z,
+        rec_i=g.rec_i_idx, rec_j=g.rec_j_idx,
         # Time
-        dt = g.dt, nt = g.nt, t_max = g.t_max,
+        dt=g.dt, nt=g.nt, t_max=g.t_max,
         # Grid
-        dx = g.dx, dz = g.dz, nx = g.nx, nz = g.nz,
+        dx=g.dx, dz=g.dz, nx=g.nx, nz=g.nz,
         # Note
-        _note = "All coordinates are ACTUAL discretized grid positions"
+        _note="All coordinates are ACTUAL discretized grid positions"
     )
-    @info "Geometry saved (actual discretized positions)" path=path
+    @info "Geometry saved (actual discretized positions)" path = path
 end
 
 function _save_multigeom_jld2(path::String, mg::MultiShotGeometry)
@@ -214,20 +214,20 @@ function _save_multigeom_jld2(path::String, mg::MultiShotGeometry)
     rec_z = [s.rec_z for s in mg.shots]
     rec_i = [s.rec_i_idx for s in mg.shots]
     rec_j = [s.rec_j_idx for s in mg.shots]
-    
+
     jldsave(path;
-        n_shots = n,
-        shot_ids = shot_ids,
-        src_x = src_x, src_z = src_z,
-        src_i = src_i, src_j = src_j,
-        n_rec = n_rec,
-        rec_x = rec_x, rec_z = rec_z,
-        rec_i = rec_i, rec_j = rec_j,
-        dt = mg.dt, nt = mg.nt,
-        dx = mg.dx, dz = mg.dz, nx = mg.nx, nz = mg.nz,
-        _note = "All coordinates are ACTUAL discretized grid positions"
+        n_shots=n,
+        shot_ids=shot_ids,
+        src_x=src_x, src_z=src_z,
+        src_i=src_i, src_j=src_j,
+        n_rec=n_rec,
+        rec_x=rec_x, rec_z=rec_z,
+        rec_i=rec_i, rec_j=rec_j,
+        dt=mg.dt, nt=mg.nt,
+        dx=mg.dx, dz=mg.dz, nx=mg.nx, nz=mg.nz,
+        _note="All coordinates are ACTUAL discretized grid positions"
     )
-    @info "Multi-shot geometry saved (actual discretized positions)" path=path n_shots=n
+    @info "Multi-shot geometry saved (actual discretized positions)" path = path n_shots = n
 end
 
 # ==============================================================================
@@ -254,7 +254,7 @@ function _save_geometry_json(path::String, g::SurveyGeometry)
         println(io, "  \"grid\": {\"dx\": $(g.dx), \"dz\": $(g.dz), \"nx\": $(g.nx), \"nz\": $(g.nz)}")
         println(io, "}")
     end
-    @info "Geometry saved (actual discretized positions)" path=path format="JSON"
+    @info "Geometry saved (actual discretized positions)" path = path format = "JSON"
 end
 
 function _save_multigeom_json(path::String, mg::MultiShotGeometry)
@@ -284,7 +284,7 @@ function _save_multigeom_json(path::String, mg::MultiShotGeometry)
         println(io, "  ]")
         println(io, "}")
     end
-    @info "Multi-shot geometry saved (actual discretized positions)" path=path n_shots=mg.n_shots format="JSON"
+    @info "Multi-shot geometry saved (actual discretized positions)" path = path n_shots = mg.n_shots format = "JSON"
 end
 
 # ==============================================================================
@@ -294,7 +294,7 @@ end
 function _save_geometry_txt(path::String, g::SurveyGeometry)
     open(path, "w") do io
         println(io, "# Survey Geometry - Single Shot")
-        println(io, "# Generated by Fomo")
+        println(io, "# Generated by ElasticWave2D")
         println(io, "# NOTE: All coordinates are ACTUAL DISCRETIZED grid positions!")
         println(io, "#" * "="^60)
         println(io, "")
@@ -323,17 +323,17 @@ function _save_geometry_txt(path::String, g::SurveyGeometry)
         println(io, "n_rec        $(g.n_rec)")
         println(io, "receivers")
         for r in 1:g.n_rec
-            @printf(io, "%6d  %12.4f  %12.4f  %6d  %6d\n", 
-                    r, g.rec_x[r], g.rec_z[r], g.rec_i_idx[r], g.rec_j_idx[r])
+            @printf(io, "%6d  %12.4f  %12.4f  %6d  %6d\n",
+                r, g.rec_x[r], g.rec_z[r], g.rec_i_idx[r], g.rec_j_idx[r])
         end
     end
-    @info "Geometry saved (actual discretized positions)" path=path format="TXT"
+    @info "Geometry saved (actual discretized positions)" path = path format = "TXT"
 end
 
 function _save_multigeom_txt(path::String, mg::MultiShotGeometry)
     open(path, "w") do io
         println(io, "# Survey Geometry - Multi Shot")
-        println(io, "# Generated by Fomo")
+        println(io, "# Generated by ElasticWave2D")
         println(io, "# NOTE: All coordinates are ACTUAL DISCRETIZED grid positions!")
         println(io, "#" * "="^60)
         println(io, "")
@@ -350,8 +350,8 @@ function _save_multigeom_txt(path::String, mg::MultiShotGeometry)
         println(io, "# Format: shot_id  src_x(m)  src_z(m)  src_i  src_j  n_rec")
         println(io, "shots")
         for s in mg.shots
-            @printf(io, "%6d  %12.4f  %12.4f  %6d  %6d  %6d\n", 
-                    s.shot_id, s.src_x, s.src_z, s.src_i, s.src_j, s.n_rec)
+            @printf(io, "%6d  %12.4f  %12.4f  %6d  %6d  %6d\n",
+                s.shot_id, s.src_x, s.src_z, s.src_i, s.src_j, s.n_rec)
         end
         println(io, "")
         println(io, "# Receiver Coordinates per Shot (actual discretized positions)")
@@ -361,12 +361,12 @@ function _save_multigeom_txt(path::String, mg::MultiShotGeometry)
             println(io, "# Shot $(s.shot_id) receivers")
             println(io, "shot_$(s.shot_id)_receivers  $(s.n_rec)")
             for r in 1:s.n_rec
-                @printf(io, "%6d  %12.4f  %12.4f  %6d  %6d\n", 
-                        r, s.rec_x[r], s.rec_z[r], s.rec_i_idx[r], s.rec_j_idx[r])
+                @printf(io, "%6d  %12.4f  %12.4f  %6d  %6d\n",
+                    r, s.rec_x[r], s.rec_z[r], s.rec_i_idx[r], s.rec_j_idx[r])
             end
         end
     end
-    @info "Multi-shot geometry saved (actual discretized positions)" path=path n_shots=mg.n_shots format="TXT"
+    @info "Multi-shot geometry saved (actual discretized positions)" path = path n_shots = mg.n_shots format = "TXT"
 end
 
 # ==============================================================================
@@ -380,7 +380,7 @@ Load geometry from file.
 """
 function load_geometry(path::String)
     ext = lowercase(splitext(path)[2])
-    
+
     if ext == ".jld2"
         return _load_geometry_jld2(path)
     else
@@ -390,7 +390,7 @@ end
 
 function _load_geometry_jld2(path::String)
     data = JLD2.load(path)
-    
+
     if haskey(data, "n_shots")
         # Multi-shot geometry
         shots = SurveyGeometry[]

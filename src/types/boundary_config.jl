@@ -1,7 +1,7 @@
 # ==============================================================================
 # types/boundary_config.jl
 #
-# Boundary configuration for Fomo.jl
+# Boundary configuration for ElasticWave2D.jl
 # ==============================================================================
 
 """
@@ -28,12 +28,12 @@ end
 
 # Default constructor
 function BoundaryConfig(;
-    top_boundary::Symbol = :free_surface,
-    bottom_boundary::Symbol = :absorbing,
-    left_boundary::Symbol = :absorbing,
-    right_boundary::Symbol = :absorbing,
-    nbc::Int = 50,
-    top_padding::Int = 0
+    top_boundary::Symbol=:free_surface,
+    bottom_boundary::Symbol=:absorbing,
+    left_boundary::Symbol=:absorbing,
+    right_boundary::Symbol=:absorbing,
+    nbc::Int=50,
+    top_padding::Int=0
 )
     BoundaryConfig(top_boundary, bottom_boundary, left_boundary, right_boundary, nbc, top_padding)
 end

@@ -216,7 +216,7 @@ All files are saved to `config.output_dir`:
 
 # Example
 ```julia
-using Fomo
+using ElasticWave2D
 
 # Create model
 vp = fill(3000.0f0, 200, 400)
@@ -315,7 +315,7 @@ function simulate!(model::VelocityModel,
         run_time_loop_with_boundaries!(be, wavefield, medium, habc, fd_coeffs, src, rec, params, config.boundary_config;
             progress=config.show_progress,
             on_step=recorder === nothing ? nothing : (W, info) -> begin
-                Fomo.record!(recorder.recorder, W, info.k, dt)
+                ElasticWave2D.record!(recorder.recorder, W, info.k, dt)
                 return true
             end
         )
@@ -324,7 +324,7 @@ function simulate!(model::VelocityModel,
         run_time_loop!(be, wavefield, medium, habc, fd_coeffs, src, rec, params;
             progress=config.show_progress,
             on_step=recorder === nothing ? nothing : (W, info) -> begin
-                Fomo.record!(recorder.recorder, W, info.k, dt)
+                ElasticWave2D.record!(recorder.recorder, W, info.k, dt)
                 return true
             end
         )
@@ -378,7 +378,7 @@ All files are saved to `config.output_dir`:
 
 # Example
 ```julia
-using Fomo
+using ElasticWave2D
 
 # Create model
 model = VelocityModel(vp, vs, rho, 10.0f0, 10.0f0)
@@ -805,179 +805,219 @@ function _plot_gather_simple(gather::Matrix{Float32}, dt::Float32, output::Strin
     ax = CairoMakie.Axis(fig[1, 1],
         xlabel="Receiver", ylabel="Time (s)", title="Shot Gather")
 
+    # 全局归一化
     gmax = maximum(abs.(gather))
-    data = gmax > 0 ? gather ./ gmax : gather
+    data = gmax > 1e-30 ? gather ./ gmax : gather
 
     hm = CairoMakie.heatmap!(ax, 1:n_rec, t_axis, data',
-        colormap=:seismic, colorrange=(-0.3, 0.3))
+        colormap=:seismic, colorrange=(-0.5, 0.5))
     ax.yreversed = true
     CairoMakie.Colorbar(fig[1, 2], hm, label="Normalized Amplitude")
     CairoMakie.save(output, fig)
 end
 
-function _plot_irregular_setup(model::VelocityModel, z_surface::Vector{Float32},
-    src_x::Real, src_depth::Real,
-    rec_x::Vector{Float32}, rec_depth::Vector{Float32},
-    ibm_method::Symbol, output::String)
-
-    fig = CairoMakie.Figure(size=(1000, 700))
-
-    x_axis = range(0, (model.nx - 1) * model.dx, length=model.nx)
-    z_axis = range(0, (model.nz - 1) * model.dz, length=model.nz)
-
-    ax = CairoMakie.Axis(fig[1, 1],
-        xlabel="X (m)", ylabel="Z (m)",
-        title="Model with Irregular Surface (IBM: $ibm_method)",
-        aspect=CairoMakie.DataAspect())
-
-    hm = CairoMakie.heatmap!(ax, x_axis, z_axis, model.vp', colormap=:viridis)
-
-    surf_x = Float32.((0:length(z_surface)-1) .* model.dx)
-    CairoMakie.lines!(ax, surf_x, z_surface, color=:white, linewidth=3, label="Free surface")
-
-    src_idx = clamp(round(Int, src_x / model.dx) + 1, 1, length(z_surface))
-    src_z = z_surface[src_idx] + src_depth
-    CairoMakie.scatter!(ax, [Float32(src_x)], [Float32(src_z)],
-        marker=:star5, markersize=20, color=:red, label="Source")
-
-    rec_z = Float32[]
-    for i in 1:length(rec_x)
-        idx = clamp(round(Int, rec_x[i] / model.dx) + 1, 1, length(z_surface))
-        push!(rec_z, z_surface[idx] + rec_depth[i])
-    end
-    step = max(1, length(rec_x) ÷ 20)
-    CairoMakie.scatter!(ax, rec_x[1:step:end], rec_z[1:step:end],
-        marker=:dtriangle, markersize=8, color=:cyan, label="Receivers")
-
-    ax.yreversed = true
-    CairoMakie.Colorbar(fig[1, 2], hm, label="Vp (m/s)")
-    CairoMakie.axislegend(ax, position=:rb)
-    CairoMakie.save(output, fig)
-end
+#function _plot_irregular_setup(model::VelocityModel, z_surface::Vector{Float32},
+#    src_x::Real, src_depth::Real,
+#    rec_x::Vector{Float32}, rec_depth::Vector{Float32},
+#    ibm_method::Symbol, output::String)
+#
+#    fig = CairoMakie.Figure(size=(1000, 700))
+#
+#    x_axis = range(0, (model.nx - 1) * model.dx, length=model.nx)
+#    z_axis = range(0, (model.nz - 1) * model.dz, length=model.nz)
+#
+#    ax = CairoMakie.Axis(fig[1, 1],
+#        xlabel="X (m)", ylabel="Z (m)",
+#        title="Model with Irregular Surface (IBM: $ibm_method)",
+#        aspect=CairoMakie.DataAspect())
+#
+#    hm = CairoMakie.heatmap!(ax, x_axis, z_axis, model.vp', colormap=:viridis)
+#
+#    surf_x = Float32.((0:length(z_surface)-1) .* model.dx)
+#    CairoMakie.lines!(ax, surf_x, z_surface, color=:white, linewidth=3, label="Free surface")
+#
+#    src_idx = clamp(round(Int, src_x / model.dx) + 1, 1, length(z_surface))
+#    src_z = z_surface[src_idx] + src_depth
+#    CairoMakie.scatter!(ax, [Float32(src_x)], [Float32(src_z)],
+#        marker=:star5, markersize=20, color=:red, label="Source")
+#
+#    rec_z = Float32[]
+#    for i in 1:length(rec_x)
+#        idx = clamp(round(Int, rec_x[i] / model.dx) + 1, 1, length(z_surface))
+#        push!(rec_z, z_surface[idx] + rec_depth[i])
+#    end
+#    step = max(1, length(rec_x) ÷ 20)
+#    CairoMakie.scatter!(ax, rec_x[1:step:end], rec_z[1:step:end],
+#        marker=:dtriangle, markersize=8, color=:cyan, label="Receivers")
+#
+#    ax.yreversed = true
+#    CairoMakie.Colorbar(fig[1, 2], hm, label="Vp (m/s)")
+#    CairoMakie.axislegend(ax, position=:rb)
+#    CairoMakie.save(output, fig)
+#end
 
 """
     seismic_survey(model, sources, receivers; 
-                   simulate_surface_waves=true, 
+                   surface_method=:free_surface,
+                   vacuum_layers=10,
                    source_depth_margin=80.0,
                    config=SimulationConfig())
 
-Simplified API for seismic survey simulation with intelligent boundary handling.
+Simplified API for seismic survey simulation with flexible surface handling.
 
 # Arguments
 - `model`: Velocity model
-- `sources`: Source positions and properties
-- `receivers`: Receiver positions
+- `sources`: Source positions as (x, z) tuple or array of tuples
+- `receivers`: Receiver positions as (rec_x, rec_z) tuple
 
 # Keyword Arguments
-- `simulate_surface_waves`: Whether to simulate surface waves (Rayleigh waves)
-- `source_depth_margin`: Minimum distance from sources to top boundary (meters). Default is 80.0m.
-- `config`: Simulation configuration
+- `surface_method::Symbol`: How to handle the free surface
+  - `:free_surface` - Explicit free surface boundary condition (default)
+  - `:absorbing` - Absorbing boundary (no surface waves)
+  - `:vacuum` - Vacuum formulation (adds vacuum layers at top)
+- `vacuum_layers::Int`: Number of vacuum layers when using `:vacuum` method (default: 10)
+- `source_depth_margin::Float32`: Minimum distance from sources to top boundary in meters
+  (only used for `:absorbing` method, default: 80.0m)
+- `config::SimulationConfig`: Simulation configuration
+- `video_config::Union{VideoConfig,Nothing}`: Video recording configuration (optional)
 
 # Examples
 ```julia
-# Simulate with surface waves (free surface boundary)
-result = seismic_survey(model, sources, receivers; simulate_surface_waves=true)
+# Method 1: Explicit free surface (classic approach)
+result = seismic_survey(model, (src_x, src_z), (rec_x, rec_z);
+    surface_method = :free_surface
+)
 
-# Simulate without surface waves (absorbing boundary)
-result = seismic_survey(model, sources, receivers; simulate_surface_waves=false)
+# Method 2: Vacuum formulation (recommended for consistency)
+result = seismic_survey(model, (src_x, src_z), (rec_x, rec_z);
+    surface_method = :vacuum,
+    vacuum_layers = 10
+)
 
-# Simulate with custom safety margin for shallow sources
-result = seismic_survey(model, sources, receivers; 
-                      simulate_surface_waves=true, 
-                      source_depth_margin=100.0)
+# Method 3: No surface waves (absorbing top boundary)
+result = seismic_survey(model, (src_x, src_z), (rec_x, rec_z);
+    surface_method = :absorbing
+)
+
+# With video recording
+video_config = VideoConfig(fields=[:vz], skip=20, fps=30)
+result = seismic_survey(model, (src_x, src_z), (rec_x, rec_z);
+    surface_method = :vacuum,
+    config = config,
+    video_config = video_config
+)
 ```
+
+See also: [`simulate!`](@ref), [`SimulationConfig`](@ref)
 """
 function seismic_survey(model, sources, receivers;
-    simulate_surface_waves=true,
+    surface_method::Symbol=:free_surface,
+    vacuum_layers::Int=10,
     source_depth_margin=80.0,
-    config=SimulationConfig()
+    config=SimulationConfig(),
+    video_config=nothing
 )
-    # Calculate required top padding based on source depth and margin
-    min_source_depth = minimum([s[2] for s in sources])  # Assuming sources are (x, z) tuples
-    required_padding = ceil(Int, source_depth_margin / model.dz)
+    # Validate surface_method
+    if !(surface_method in [:free_surface, :absorbing, :vacuum])
+        error("surface_method must be :free_surface, :absorbing, or :vacuum")
+    end
 
-    # When simulate_surface_waves=false, we need to expand the model vertically
-    # to ensure sources are sufficiently far from the top boundary
-    expanded_model = model
-    adjusted_sources = sources
-    adjusted_receivers = receivers
+    # Parse sources
+    if sources isa Tuple
+        src_x, src_z = Float32(sources[1]), Float32(sources[2])
+    elseif sources isa Vector
+        src_x, src_z = Float32(sources[1][1]), Float32(sources[1][2])
+    else
+        error("Sources format not supported. Expected (x, z) tuple or array of tuples")
+    end
 
-    if !simulate_surface_waves && source_depth_margin > 0
-        # Expand the model by adding extra space at the top
+    # Parse receivers
+    rec_x = Float32.(receivers[1])
+    rec_z = Float32.(receivers[2])
+
+    # ===========================
+    # Handle different surface methods
+    # ===========================
+
+    if surface_method == :vacuum
+        # Add vacuum layers at top of model
+        println("Using vacuum formulation for free surface ($(vacuum_layers) layers)")
+
+        # Create expanded model with vacuum at top
+        nz_new = model.nz + vacuum_layers
+
+        vp_new = zeros(Float32, nz_new, model.nx)
+        vs_new = zeros(Float32, nz_new, model.nx)
+        rho_new = zeros(Float32, nz_new, model.nx)
+
+        # Top vacuum_layers rows are vacuum (already zeros)
+        # Copy original model below
+        vp_new[vacuum_layers+1:end, :] = model.vp
+        vs_new[vacuum_layers+1:end, :] = model.vs
+        rho_new[vacuum_layers+1:end, :] = model.rho
+
+        expanded_model = VelocityModel(
+            vp_new, vs_new, rho_new,
+            model.dx, model.dz;
+            name=model.name * "_vacuum"
+        )
+
+        # Shift source and receiver z-coordinates
+        vacuum_thickness = vacuum_layers * model.dz
+        adjusted_src_z = src_z + vacuum_thickness
+        adjusted_rec_z = rec_z .+ vacuum_thickness
+
+        # Create config with free_surface disabled
+        new_config = SimulationConfig(
+            nbc=config.nbc,
+            fd_order=config.fd_order,
+            dt=config.dt,
+            nt=config.nt,
+            cfl=config.cfl,
+            f0=config.f0,
+            free_surface=false,  # Disabled! Using vacuum
+            output_dir=config.output_dir,
+            save_gather=config.save_gather,
+            show_progress=config.show_progress,
+            plot_gather=config.plot_gather,
+            boundary_config=config.boundary_config
+        )
+
+        return simulate!(expanded_model, src_x, adjusted_src_z, rec_x, adjusted_rec_z;
+            config=new_config, video_config=video_config)
+
+    elseif surface_method == :absorbing
+        # Expand model to keep sources away from absorbing boundary
+        println("Using absorbing top boundary (no surface waves)")
+
+        min_source_depth = src_z
         extra_layers = ceil(Int, source_depth_margin / model.dz)
-        if extra_layers > 0
-            # Create an expanded model with additional space at the top
-            # We must fill with the same properties as the top layer to avoid impedance contrast
-            # which would cause reflections (acting like a free surface)
 
-            # Get top row properties
+        if extra_layers > 0
+            # Expand model by replicating top row (no impedance contrast)
             top_vp_row = model.vp[1:1, :]
             top_vs_row = model.vs[1:1, :]
             top_rho_row = model.rho[1:1, :]
 
-            # Replicate top row for the expanded layers
             expanded_vp = vcat(repeat(top_vp_row, extra_layers), model.vp)
             expanded_vs = vcat(repeat(top_vs_row, extra_layers), model.vs)
             expanded_rho = vcat(repeat(top_rho_row, extra_layers), model.rho)
 
-            # Update source and receiver positions to account for the expansion
-            adjusted_sources = Tuple{Float32,Float32}[]
-            for src in sources
-                new_src_z = Float32(src[2] + source_depth_margin)  # Shift source down by padding amount and ensure Float32
-                push!(adjusted_sources, (Float32(src[1]), new_src_z))
-            end
-
-            # Adjust receiver z-coordinates too
-            new_rec_z = [rz + source_depth_margin for rz in receivers[2]]
-            adjusted_receivers = (receivers[1], new_rec_z)
-
-            # Create new model with expanded dimensions
             expanded_model = VelocityModel(
-                expanded_vp,
-                expanded_vs,
-                expanded_rho,
-                model.dx,
-                model.dz;
+                expanded_vp, expanded_vs, expanded_rho,
+                model.dx, model.dz;
                 name=model.name * "_expanded"
             )
+
+            # Shift coordinates
+            shift = Float32(source_depth_margin)
+            adjusted_src_z = src_z + shift
+            adjusted_rec_z = rec_z .+ shift
+        else
+            expanded_model = model
+            adjusted_src_z = src_z
+            adjusted_rec_z = rec_z
         end
-    end
-
-    # Adjust boundary configuration based on user preference
-    if config.boundary_config === nothing
-        # Create default boundary config based on simulate_surface_waves
-        top_boundary = simulate_surface_waves ? :free_surface : :absorbing
-        boundary_config = BoundaryConfig(
-            top_boundary=top_boundary,
-            nbc=config.nbc,
-            top_padding=required_padding
-        )
-
-        # Update config with new boundary config
-        new_config = SimulationConfig(
-            nbc=config.nbc,
-            fd_order=config.fd_order,
-            dt=config.dt,
-            nt=config.nt,
-            cfl=config.cfl,
-            f0=config.f0,
-            free_surface=ifelse(simulate_surface_waves, true, false),  # For backward compatibility
-            output_dir=config.output_dir,
-            save_gather=config.save_gather,
-            show_progress=config.show_progress,
-            plot_gather=config.plot_gather,
-            boundary_config=boundary_config
-        )
-    else
-        # Use provided boundary config but adjust padding if needed
-        boundary_config = BoundaryConfig(
-            simulate_surface_waves ? :free_surface : :absorbing,  # Override based on user preference
-            config.boundary_config.bottom_boundary,
-            config.boundary_config.left_boundary,
-            config.boundary_config.right_boundary,
-            config.boundary_config.nbc,
-            max(config.boundary_config.top_padding, required_padding)
-        )
 
         new_config = SimulationConfig(
             nbc=config.nbc,
@@ -986,25 +1026,37 @@ function seismic_survey(model, sources, receivers;
             nt=config.nt,
             cfl=config.cfl,
             f0=config.f0,
-            free_surface=ifelse(simulate_surface_waves, true, false),  # For backward compatibility
+            free_surface=false,  # Absorbing
             output_dir=config.output_dir,
             save_gather=config.save_gather,
             show_progress=config.show_progress,
             plot_gather=config.plot_gather,
-            boundary_config=boundary_config
+            boundary_config=config.boundary_config
         )
-    end
 
-    # Handle different source formats
-    # At this point, adjusted_sources is either a single tuple or an array of tuples
-    if adjusted_sources isa Vector{Tuple{Float32,Float32}}  # Array of tuples
-        # Multiple sources - use the first source for now
-        src_x, src_z = adjusted_sources[1]
-        return simulate!(expanded_model, Float32(src_x), Float32(src_z), adjusted_receivers[1], adjusted_receivers[2]; config=new_config)
-    elseif adjusted_sources isa Tuple  # Single (x, z) tuple
-        src_x, src_z = adjusted_sources
-        return simulate!(expanded_model, Float32(src_x), Float32(src_z), adjusted_receivers[1], adjusted_receivers[2]; config=new_config)
-    else
-        error("Sources format not supported. Expected (x, z) tuple or array of (x, z) tuples")
+        return simulate!(expanded_model, src_x, adjusted_src_z, rec_x, adjusted_rec_z;
+            config=new_config, video_config=video_config)
+
+    else  # :free_surface
+        # Use explicit free surface boundary condition
+        println("Using explicit free surface boundary condition")
+
+        new_config = SimulationConfig(
+            nbc=config.nbc,
+            fd_order=config.fd_order,
+            dt=config.dt,
+            nt=config.nt,
+            cfl=config.cfl,
+            f0=config.f0,
+            free_surface=true,
+            output_dir=config.output_dir,
+            save_gather=config.save_gather,
+            show_progress=config.show_progress,
+            plot_gather=config.plot_gather,
+            boundary_config=config.boundary_config
+        )
+
+        return simulate!(model, src_x, src_z, rec_x, rec_z;
+            config=new_config, video_config=video_config)
     end
 end

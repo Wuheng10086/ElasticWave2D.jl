@@ -7,7 +7,7 @@
 # Uses the improved vacuum formulation (Zeng et al., 2012).
 #
 # NOTE: This file depends on functions from init.jl (_pad_array, etc.)
-#       Make sure init.jl is included before this file in Fomo.jl
+#       Make sure init.jl is included before this file in ElasticWave2D.jl
 #
 # Reference:
 #   Zeng et al. (2012). An improved vacuum formulation for 2D finite-difference
