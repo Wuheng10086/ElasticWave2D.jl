@@ -53,7 +53,7 @@ end
 """
     TopographyConfig(; kwargs...)
 
-Configuration for simulations with irregular topography.
+Configuration for simulations with irregular topography (vacuum formulation).
 
 # Keyword Arguments
 - `duration::Float64 = 2.0`: Simulation duration in seconds
@@ -62,7 +62,6 @@ Configuration for simulations with irregular topography.
 - `fd_order::Int = 8`: Finite difference order (2, 4, 6, 8, 10)
 - `boundary_layers::Int = 50`: Number of absorbing boundary layers
 - `source_freq::Float64 = 15.0`: Source dominant frequency in Hz
-- `ibm_method::Symbol = :direct_zero`: IBM boundary condition method (:direct_zero or :mirror)
 - `src_depth::Float64 = 30.0`: Source depth below surface in meters
 - `rec_depth::Float64 = 0.0`: Receiver depth below surface in meters
 - `output_dir::String = "outputs"`: Output directory
@@ -75,7 +74,6 @@ Configuration for simulations with irregular topography.
 config = TopographyConfig(
     duration = 3.0,
     dx = 5.0,
-    ibm_method = :direct_zero,
     src_depth = 50.0,
     output_dir = "topography_simulation"
 )
@@ -88,7 +86,6 @@ Base.@kwdef struct TopographyConfig
     fd_order::Int = 8
     boundary_layers::Int = 50
     source_freq::Float64 = 15.0
-    ibm_method::Symbol = :direct_zero
     src_depth::Float64 = 30.0
     rec_depth::Float64 = 0.0
     output_dir::String = "outputs"
@@ -327,22 +324,22 @@ rec_config = ReceiverConfig([(100.0, 10.0), (200.0, 10.0), (300.0, 10.0)])
 rec_config = ReceiverConfig(nothing; spacing=20.0, count=100, start_pos=(50.0, 10.0), end_pos=(2050.0, 10.0))
 ```
 """
-function ReceiverConfig(positions::Union{Vector{Tuple{Real, Real}}, Nothing}=nothing;
-                      spacing::Union{Real, Nothing}=nothing, count::Union{Int, Nothing}=nothing,
-                      start_pos::Tuple{Real, Real}=(0.0, 0.0), end_pos::Tuple{Real, Real}=(0.0, 0.0))
+function ReceiverConfig(positions::Union{Vector{Tuple{Real,Real}},Nothing}=nothing;
+    spacing::Union{Real,Nothing}=nothing, count::Union{Int,Nothing}=nothing,
+    start_pos::Tuple{Real,Real}=(0.0, 0.0), end_pos::Tuple{Real,Real}=(0.0, 0.0))
     if positions !== nothing
         # Use explicit positions
-        return (positions = positions,)
+        return (positions=positions,)
     elseif count !== nothing && start_pos !== nothing && end_pos !== nothing
         # Generate evenly spaced receivers based on count and positions
         x_start, z_start = start_pos
         x_end, z_end = end_pos
-        
+
         x_positions = range(x_start, stop=x_end, length=count)
         z_positions = range(z_start, stop=z_end, length=count)
-        
+
         positions = [(x_positions[i], z_positions[i]) for i in 1:count]
-        return (positions = positions,)
+        return (positions=positions,)
     else
         error("Either provide explicit positions or count with start_pos and end_pos for evenly spaced receivers")
     end
@@ -428,27 +425,7 @@ function simulate(model::VelocityModel,
         return simulate!(model, src_x, src_z, rec_x, rec_z;
             config=sim_config, be=be)
     elseif config isa TopographyConfig
-        # For topography simulations, we need a surface
-        # Create a default flat surface for now
-        z_surface = flat_surface(model.nx, model.dx, 30.0f0)
-
-        sim_config = IrregularSurfaceConfig(
-            nt=nt,
-            dt=Float32(dt),
-            fd_order=config.fd_order,
-            nbc=config.boundary_layers,
-            f0=Float32(config.source_freq),
-            ibm_method=config.ibm_method,
-            src_depth=Float32(config.src_depth),
-            rec_depth=Float32(config.rec_depth),
-            output_dir=config.output_dir,
-            save_gather=config.save_results,
-            show_progress=config.show_progress
-        )
-
-        # Run the topography simulation
-        return simulate_irregular!(model, z_surface, src_x, rec_x;
-            config=sim_config, be=be)
+        error("TopographyConfig workflow is not available: IBM boundary method has been removed. Use init_medium_vacuum + run_time_loop! (vacuum formulation) to drive topography simulations.")
     end
 end
 

@@ -19,7 +19,7 @@ Traditional seismic simulation codes are hard to install, poorly documented, and
 - ✅ **Runs on gaming GPUs** — GTX 1060, RTX 3060, etc.
 - ✅ **CPU optimized too** — Multi-threaded with `julia -t auto`
 - ✅ **Student-friendly** — Clear examples, readable code
-- ✅ **Flexible boundaries** — HABC, free surface, vacuum formulation
+- ✅ **Flexible boundaries** — HABC, Image Method, vacuum formulation
 
 ## Features
 
@@ -29,6 +29,7 @@ Traditional seismic simulation codes are hard to install, poorly documented, and
 | **CPU Optimized** | Multi-threaded kernels via `julia -t auto` |
 | **Staggered Grid FD** | 2nd-10th order accuracy (Virieux 1986) |
 | **HABC Boundaries** | Higdon Absorbing BC (Ren & Liu 2014) |
+| **Image Method** | Accurate free surface BC (Robertsson 1996) |
 | **Vacuum Formulation** | Irregular topography, tunnels, cavities (Zeng et al. 2012) |
 | **Video Recording** | Wavefield snapshots → MP4 |
 | **Multiple Formats** | SEG-Y, Binary, HDF5, NPY, MAT, JLD2 |
@@ -132,7 +133,7 @@ julia -t auto examples/seismic_survey_demo.jl
 | Method | Surface Waves | Use Case |
 |--------|--------------|----------|
 | `:absorbing` | ❌ | Body waves only |
-| `:free_surface` | ✅ | Classic explicit BC |
+| `:image` | ✅ | Accurate flat surface BC |
 | `:vacuum` | ✅ | Unified approach (recommended) |
 
 **Surface wave comparison** — Both methods produce Rayleigh waves, with nearly identical results:
@@ -142,7 +143,7 @@ julia -t auto examples/seismic_survey_demo.jl
   <img src="docs/images/vacuum_gather.png" width="400" alt="Vacuum Formulation">
 </p>
 <p align="center">
-  <i>Left: Explicit free surface BC | Right: Vacuum formulation</i>
+  <i>Left: Image Method BC | Right: Vacuum formulation</i>
 </p>
 
 The vacuum method offers more flexibility (topography, internal voids) with comparable accuracy.
@@ -153,7 +154,7 @@ The vacuum method offers more flexibility (topography, internal voids) with comp
 
 ```julia
 seismic_survey(model, source, receivers;
-    surface_method = :vacuum,     # :vacuum, :free_surface, :absorbing
+    surface_method = :vacuum,     # :vacuum, :image, :absorbing
     vacuum_layers = 10,           # Number of vacuum layers (for :vacuum)
     config = SimulationConfig(),
     video_config = nothing
@@ -168,7 +169,7 @@ result = simulate!(model, src_x, src_z, rec_x, rec_z;
         nt = 3000,           # Time steps
         f0 = 15.0f0,         # Source frequency (Hz)
         fd_order = 8,        # FD accuracy order
-        free_surface = true, # Explicit free surface BC
+        free_surface = true, # Use Image Method BC
         output_dir = "outputs"
     ),
     video_config = VideoConfig(
@@ -181,12 +182,12 @@ result = simulate!(model, src_x, src_z, rec_x, rec_z;
 
 ### Surface Method Comparison
 
-| Parameter | `free_surface=true` | `surface_method=:vacuum` |
-|-----------|---------------------|--------------------------|
-| Implementation | Explicit BC | ρ=0 layers at top |
+| Parameter | `surface_method=:image` | `surface_method=:vacuum` |
+|-----------|-------------------------|--------------------------|
+| Implementation | Image Method BC | ρ=0 layers at top |
 | Topography | ❌ Flat only | ✅ Any shape |
 | Internal voids | ❌ | ✅ Tunnels, caves |
-| Consistency | — | Same physics everywhere |
+| Consistency | Accurate surface waves | Same physics everywhere |
 
 ## Performance
 

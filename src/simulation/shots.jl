@@ -82,7 +82,7 @@ Configuration for multiple shots.
 struct MultiShotConfig
     shots::Vector{ShotConfig}
     wavelet::Vector{Float32}
-    source_type::Symbol         # :pressure, :force_x, :force_z
+    source_type::Symbol         # :pressure, :stress_txx, :stress_tzz, :stress_txz
 end
 
 """
@@ -148,7 +148,7 @@ function run_shots!(backend::AbstractBackend, W::Wavefield, M::Medium, H::HABCCo
     
     for (i, shot) in enumerate(shot_config.shots)
         # Create source for this shot (lightweight - only indices change)
-        src = _create_source(backend, M, shot, wavelet_device)
+        src = _create_source(backend, M, shot, wavelet_device, shot_config.source_type)
         
         # REUSE receiver buffer - just clear data (no reallocation)
         fill!(rec.data, 0.0f0)
@@ -218,7 +218,7 @@ function run_shots_fast!(backend::AbstractBackend, W::Wavefield, M::Medium, H::H
         reset!(backend, W)
         
         # Create source
-        src = _create_source(backend, M, shot, wavelet_device)
+        src = _create_source(backend, M, shot, wavelet_device, shot_config.source_type)
         
         # Clear receiver data
         fill!(rec.data, 0.0f0)
@@ -248,16 +248,36 @@ end
 """
 Create source on device from shot config.
 """
-function _create_source(::CPUBackend, M::Medium, shot::ShotConfig, wavelet::Vector{Float32})
+function _create_source(::CPUBackend, M::Medium, shot::ShotConfig, wavelet::Vector{Float32}, source_type::Symbol)
     i = _coord_to_index(shot.source_x, M.dx, M.pad)
     j = _coord_to_index(shot.source_z, M.dz, M.pad)
-    return Source(i, j, wavelet)
+    if source_type == :pressure
+        return Source(i, j, wavelet)
+    elseif source_type == :stress_txx
+        return StressSource(i, j, wavelet, :txx)
+    elseif source_type == :stress_tzz
+        return StressSource(i, j, wavelet, :tzz)
+    elseif source_type == :stress_txz
+        return StressSource(i, j, wavelet, :txz)
+    else
+        error("Unknown source_type: $source_type. Use :pressure or :stress_txx/:stress_tzz/:stress_txz")
+    end
 end
 
-function _create_source(::CUDABackend, M::Medium, shot::ShotConfig, wavelet::CuVector{Float32})
+function _create_source(::CUDABackend, M::Medium, shot::ShotConfig, wavelet::CuVector{Float32}, source_type::Symbol)
     i = _coord_to_index(shot.source_x, M.dx, M.pad)
     j = _coord_to_index(shot.source_z, M.dz, M.pad)
-    return Source(Int32(i), Int32(j), wavelet)
+    if source_type == :pressure
+        return Source(Int32(i), Int32(j), wavelet)
+    elseif source_type == :stress_txx
+        return StressSource(Int32(i), Int32(j), wavelet, :txx)
+    elseif source_type == :stress_tzz
+        return StressSource(Int32(i), Int32(j), wavelet, :tzz)
+    elseif source_type == :stress_txz
+        return StressSource(Int32(i), Int32(j), wavelet, :txz)
+    else
+        error("Unknown source_type: $source_type. Use :pressure or :stress_txx/:stress_tzz/:stress_txz")
+    end
 end
 
 """

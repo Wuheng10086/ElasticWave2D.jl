@@ -116,15 +116,24 @@ end
 # Source & Receiver - Parametric
 # ==============================================================================
 
+abstract type AbstractSource end
+
 """
     Source{V<:AbstractVector}
 
 Single source configuration.
 """
-struct Source{V<:AbstractVector{Float32}, I<:Integer}
+struct Source{V<:AbstractVector{Float32}, I<:Integer} <: AbstractSource
     i::I                # X grid index
     j::I                # Z grid index
     wavelet::V          # Source time function
+end
+
+struct StressSource{V<:AbstractVector{Float32}, I<:Integer} <: AbstractSource
+    i::I
+    j::I
+    wavelet::V
+    component::Symbol   # :txx, :tzz, :txz
 end
 
 """
@@ -169,8 +178,23 @@ end
 """
     ShotResult
 
-Result from a single shot simulation.
-Contains gather data and geometry information for migration.
+Container for the results of a single shot simulation.
+Typically returned by batch simulation functions or `run_shot!`.
+
+# Fields
+- `gather::Matrix{Float32}`: Recorded seismic gather data [nt × n_rec]. Always stored on CPU.
+- `shot_id::Int`: Unique identifier for the shot.
+- `src_i::Int`: Source X grid index.
+- `src_j::Int`: Source Z grid index.
+- `rec_i::Vector{Int}`: Receiver X grid indices.
+- `rec_j::Vector{Int}`: Receiver Z grid indices.
+
+# Example
+```julia
+# Access gather data from a shot result
+data = result.gather
+println("Shot ID: ", result.shot_id)
+```
 """
 struct ShotResult
     gather::Matrix{Float32}   # [nt × n_rec] - always on CPU

@@ -20,7 +20,27 @@ const CUDA_BACKEND = CUDABackend()
 """
     backend(type::Symbol) -> AbstractBackend
 
-Select computation backend. `:cpu` or `:cuda`
+Select the computation backend for the simulation.
+
+# Arguments
+- `type::Symbol`: The backend type.
+  - `:cpu` - Use CPU (threaded via LoopVectorization).
+  - `:cuda` - Use NVIDIA GPU (via CUDA.jl).
+
+# Returns
+- `AbstractBackend`: A singleton instance of `CPUBackend` or `CUDABackend`.
+
+# Throws
+- `ErrorException`: If `:cuda` is requested but no GPU is available/functional.
+
+# Example
+```julia
+# Auto-select
+be = is_cuda_available() ? backend(:cuda) : backend(:cpu)
+
+# Force CPU
+be = backend(:cpu)
+```
 """
 function backend(type::Symbol)
     if type == :cpu

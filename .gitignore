@@ -37,7 +37,7 @@ results/
 *.mp4
 *.avi
 *.mov
-*.gif
+#*.gif
 
 # Large data files
 *.bin
@@ -55,7 +55,7 @@ results/
 # *.hdf5
 
 # Images (generated plots)
-*.png
+#*.png
 *.jpg
 *.jpeg
 *.pdf
@@ -136,6 +136,4 @@ coverage/
 !examples/*.jld2
 !data/*.jld2
 
-# Keep documentation images
-!docs/src/assets/*.png
-!docs/src/assets/*.svg
+

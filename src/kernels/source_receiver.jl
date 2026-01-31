@@ -29,6 +29,27 @@ function inject_source!(::CPUBackend, W::Wavefield, src::Source, k::Int, dt::Flo
     return nothing
 end
 
+function inject_source!(::CPUBackend, W::Wavefield, src::StressSource, k::Int, dt::Float32)
+    if k > length(src.wavelet)
+        return nothing
+    end
+
+    wav = src.wavelet[k]
+    i, j = src.i, src.j
+
+    if src.component == :txx
+        W.txx[i, j] += wav
+    elseif src.component == :tzz
+        W.tzz[i, j] += wav
+    elseif src.component == :txz
+        W.txz[i, j] += wav
+    else
+        error("Unknown stress component: $(src.component). Use :txx, :tzz, or :txz")
+    end
+
+    return nothing
+end
+
 function _inject_source_kernel!(txx, tzz, wavelet, i0, j0, k)
     if threadIdx().x == 1 && blockIdx().x == 1
         wav = wavelet[k]
@@ -36,6 +57,14 @@ function _inject_source_kernel!(txx, tzz, wavelet, i0, j0, k)
             txx[i0, j0] += wav
             tzz[i0, j0] += wav
         end
+    end
+    return nothing
+end
+
+function _inject_field_at_kernel!(field, wavelet, i0, j0, k)
+    if threadIdx().x == 1 && blockIdx().x == 1
+        wav = wavelet[k]
+        @inbounds field[i0, j0] += wav
     end
     return nothing
 end
@@ -48,6 +77,24 @@ function inject_source!(::CUDABackend, W::Wavefield, src::Source, k::Int, dt::Fl
     @cuda threads=1 blocks=1 _inject_source_kernel!(
         W.txx, W.tzz, src.wavelet, src.i, src.j, k
     )
+    return nothing
+end
+
+function inject_source!(::CUDABackend, W::Wavefield, src::StressSource, k::Int, dt::Float32)
+    if k > length(src.wavelet)
+        return nothing
+    end
+
+    if src.component == :txx
+        @cuda threads=1 blocks=1 _inject_field_at_kernel!(W.txx, src.wavelet, src.i, src.j, k)
+    elseif src.component == :tzz
+        @cuda threads=1 blocks=1 _inject_field_at_kernel!(W.tzz, src.wavelet, src.i, src.j, k)
+    elseif src.component == :txz
+        @cuda threads=1 blocks=1 _inject_field_at_kernel!(W.txz, src.wavelet, src.i, src.j, k)
+    else
+        error("Unknown stress component: $(src.component). Use :txx, :tzz, or :txz")
+    end
+
     return nothing
 end
 

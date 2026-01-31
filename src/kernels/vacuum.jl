@@ -89,8 +89,7 @@ function compute_surface_indices(z_elevation::Vector{<:Real}, dz::Real, pad::Int
         # Positive z (elevation above original surface) → smaller j
         j_surf = pad + 1 - round(Int, z / dz)
 
-        # Clamp to valid range
-        surface_j[i] = clamp(j_surf, 1, nx)  # Note: we pass nx but it should be nz
+        surface_j[i] = j_surf
     end
 
     return surface_j
@@ -258,7 +257,7 @@ function setup_vacuum_formulation!(vp::Matrix{Float32}, vs::Matrix{Float32},
     # Compute surface indices
     surface_j = compute_surface_indices(surface_elevation, dz, pad, nx)
 
-    # Fix: pass nz for clamping in compute_surface_indices
+    # Clamp to valid z-index range
     @inbounds for i in 1:nx
         surface_j[i] = clamp(surface_j[i], 1, nz)
     end

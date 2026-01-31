@@ -81,21 +81,21 @@ function seismic_survey_demo()
     )
 
     # =================================================================
-    # Scenario 2: Explicit Free Surface
+    # Scenario 2: Image Method Free Surface
     # =================================================================
-    println("2. Explicit free surface boundary condition")
+    println("2. Image Method free surface boundary condition")
 
-    model2 = create_layered_model("free_surface")
-    output_dir2 = "outputs/survey_demo/2_free_surface"
+    model2 = create_layered_model("image")
+    output_dir2 = "outputs/survey_demo/2_image"
     mkpath(output_dir2)
 
     plot_setup(model2, [src_x], [src_z], rec_x, rec_z;
-        title="Scenario 2: Explicit Free Surface",
+        title="Scenario 2: Image Method Free Surface",
         output=joinpath(output_dir2, "setup.png")
     )
 
     seismic_survey(model2, (src_x, src_z), (rec_x, rec_z);
-        surface_method=:free_surface,
+        surface_method=:image,
         config=SimulationConfig(
             nt=nt, f0=f0,
             output_dir=output_dir2
@@ -186,13 +186,13 @@ function seismic_survey_demo()
     println()
     println("Comparison:")
     println("  1_absorbing/    - No surface waves (body waves only)")
-    println("  2_free_surface/ - Explicit boundary condition")
+    println("  2_image/        - Image Method free surface BC")
     println("  3_vacuum_flat/  - Vacuum formulation (flat)")
     println("  4_vacuum_topo/  - Vacuum formulation (topography)")
     println()
     println("Surface method options in seismic_survey():")
     println("  :absorbing    - Absorbing top boundary")
-    println("  :free_surface - Explicit free surface BC")
+    println("  :image        - Image Method free surface BC")
     println("  :vacuum       - Vacuum formulation (auto adds layers)")
 end
 

@@ -81,7 +81,7 @@ export is_cuda_available, is_cuda_functional
 
 # --- Types ---
 export Wavefield, Medium, HABCConfig
-export Source, Receivers, SimParams
+export Source, StressSource, Receivers, SimParams
 export ShotConfig, MultiShotConfig, ShotResult
 export VelocityModel
 export BoundaryConfig
@@ -104,7 +104,7 @@ export validate_surface_elevation
 # --- Kernels (advanced) ---
 export update_velocity!, update_stress!
 export apply_habc!, apply_habc_velocity!, apply_habc_stress!
-export backup_boundary!, apply_free_surface!
+export backup_boundary!, apply_image_method!
 export inject_source!, record_receivers!, reset!
 
 # --- Simulation ---

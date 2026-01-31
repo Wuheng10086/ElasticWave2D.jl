@@ -255,7 +255,7 @@ function run_shots_multi_gpu!(
                     
                     # 5. Free surface
                     if medium.is_free_surface
-                        apply_free_surface!(be, wavefield, medium)
+                        apply_free_surface!(be, wavefield, medium, params.M)
                     end
                     
                     # 6. Record receivers

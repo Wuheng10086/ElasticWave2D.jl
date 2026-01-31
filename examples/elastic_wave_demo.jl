@@ -4,10 +4,11 @@ function elastic_wave_demo()
     println("ElasticWave2D.jl - Elastic Wave Phenomena Demo (Two-Layer Model)")
     println("======================================================")
 
-    # 1. Define Model (Balanced Resolution)
-    # 0.5m spacing => 3200 x 2000 grid points
+    fast = get(ENV, "ELASTICWAVE_DEMO_FAST", "1") == "1"
+
+    # 1. Define Model
     # Keep physical size same: 1600m x 1000m
-    dx, dz = 0.5f0, 0.5f0
+    dx, dz = fast ? (10.0f0, 10.0f0) : (0.5f0, 0.5f0)
     nx = round(Int, 1600.0 / dx)
     nz = round(Int, 1000.0 / dz)
 
@@ -54,23 +55,21 @@ function elastic_wave_demo()
     # Higher frequency source (40Hz)
 
     config = SimulationConfig(
-        nt=12000,           # Sufficient steps for 0.5m grid
-        f0=40.0f0,          # Higher frequency
-        cfl=0.3f0,          # Safe CFL
-        free_surface=true,  # Explicit free surface
-        output_dir="outputs/elastic_wave_demo",
-        save_gather=true,
-        plot_gather=true,
-        show_progress=true
+        nt = fast ? 1500 : 12000,
+        f0 = fast ? 25.0f0 : 40.0f0,
+        cfl = 0.3f0,
+        free_surface = true,
+        output_dir = "outputs/elastic_wave_demo",
+        save_gather = true,
+        plot_gather = true,
+        show_progress = true
     )
 
-    # Adjust video skip to avoid generating too many frames
-    # 12000 steps / 20fps / 20 sec video = ~30 steps per frame
-    video_config = VideoConfig(
-        fields=[:vz],  # Only record Vz
-        skip=50,       # Save every 50th step (240 frames total)
-        fps=20,        # Slower playback
-        colormap=:seismic # Default seismic (Red-White-Blue)
+    video_config = fast ? nothing : VideoConfig(
+        fields = [:vz],
+        skip = 50,
+        fps = 20,
+        colormap = :seismic
     )
 
     result = simulate!(model, src_x, src_z, rec_x, rec_z;
@@ -80,7 +79,9 @@ function elastic_wave_demo()
 
     println("\nSimulation complete!")
     println("Results saved to: $(config.output_dir)")
-    println(" - Check 'wavefield_vz.mp4' to see reflection/refraction")
+    if video_config !== nothing
+        println(" - Check 'wavefield_vz.mp4' to see reflection/refraction")
+    end
 end
 
 # Run the demo
