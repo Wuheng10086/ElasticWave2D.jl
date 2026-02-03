@@ -170,8 +170,8 @@ include("io/seismic_data_io.jl")
 include("io/geometry_io.jl")
 
 # 7.5 Outputs (directory structure & artifacts)
-include("outputs/paths.jl")
-include("outputs/artifacts.jl")
+include("io/paths.jl")
+include("io/artifacts.jl")
 
 # 8. User API (single-shot)
 include("api/single_shot_api.jl")
