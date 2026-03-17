@@ -1,5 +1,10 @@
 # ElasticWave2D.jl
 
+## 🚨 This repository has been moved
+
+This project has been refactored and migrated to a new repository. 
+Please go to the new repo: **[Fomo.jl](https://github.com/Wuheng10086/Fomo.jl)**
+
 [🇨🇳 中文](README_zh.md) | **English**
 
 <p align="center">
