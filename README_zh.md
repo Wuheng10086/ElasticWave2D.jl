@@ -1,5 +1,10 @@
 # ElasticWave2D.jl
 
+## 🚨 项目已迁移
+
+本项目代码已进行全面重构，并迁移至新的代码仓库。
+请访问新仓库：**[Fomo.jl](https://github.com/Wuheng10086/Fomo.jl)**
+
 **中文** | [🇺🇸 English](README.md)
 
 <p align="center">
